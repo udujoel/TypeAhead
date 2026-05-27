@@ -1,21 +1,14 @@
 import AppKit
-import Sparkle
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarMenu: StatusBarMenu?
-    private let updaterController = SPUStandardUpdaterController(
-        startingUpdater: true,
-        updaterDelegate: nil,
-        userDriverDelegate: nil
-    )
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         let deps = AppDependencies.shared
         statusBarMenu = StatusBarMenu(
             settings: deps.settings,
-            pipeline: deps.completionPipeline,
-            updaterController: updaterController
+            pipeline: deps.completionPipeline
         )
 
         deps.keyMonitor.onKeystroke = { [weak deps] _ in
