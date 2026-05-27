@@ -3,58 +3,75 @@ import AppKit
 @MainActor
 final class CompletionOverlay {
     private let panel: NSPanel
-    private let textField: NSTextField
+    private let label: NSTextField
 
     init() {
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 400, height: 32),
+            contentRect: .zero,
             styleMask: [.nonactivatingPanel, .borderless],
             backing: .buffered,
-            defer: false
+            defer: true
         )
         panel.level = .floating
-        panel.backgroundColor = NSColor(white: 0.12, alpha: 0.95)
+        panel.backgroundColor = .clear
         panel.isOpaque = false
-        panel.hasShadow = true
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
 
-        textField = NSTextField(frame: NSRect(x: 8, y: 4, width: 384, height: 24))
-        textField.isEditable = false
-        textField.isBordered = false
-        textField.backgroundColor = .clear
-        textField.textColor = NSColor.placeholderTextColor
-        textField.font = NSFont.systemFont(ofSize: 14, weight: .regular)
-        panel.contentView?.addSubview(textField)
+        label = NSTextField(frame: .zero)
+        label.isEditable = false
+        label.isSelectable = false
+        label.isBordered = false
+        label.drawsBackground = false
+        label.backgroundColor = .clear
+        label.textColor = NSColor.tertiaryLabelColor
+        panel.contentView?.addSubview(label)
     }
 
-    func show(text: String, near cursorRect: NSRect) {
-        textField.stringValue = text
-        textField.sizeToFit()
-        let panelWidth = min(textField.frame.width + 24, 500)
-        let panelSize = NSSize(width: panelWidth, height: 32)
-        let origin = OverlayPositioner.panelOrigin(cursorRect: cursorRect, panelSize: panelSize)
-        panel.setFrame(NSRect(origin: origin, size: panelSize), display: false)
-        panel.alphaValue = 0
+    // MARK: - Show / Update / Hide
+
+    func show(text: String, near cursorRect: NSRect, fontSize: CGFloat) {
+        label.font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
+        label.stringValue = text
+        label.sizeToFit()
+        repositionPanel(cursorRect: cursorRect)
+        panel.alphaValue = 1
         panel.orderFront(nil)
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.06
-            panel.animator().alphaValue = 1
+    }
+
+    func update(text: String, near cursorRect: NSRect) {
+        label.stringValue = text
+        label.sizeToFit()
+        repositionPanel(cursorRect: cursorRect)
+    }
+
+    /// - Parameter animated: Pass `false` on keystroke for an instant hide (no flicker).
+    ///   Pass `true` for a gentle fade on explicit dismiss (Escape, timeout).
+    func hide(animated: Bool = true) {
+        if animated {
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.12
+                panel.animator().alphaValue = 0
+            }, completionHandler: {
+                self.panel.orderOut(nil)
+            })
+        } else {
+            panel.alphaValue = 0
+            panel.orderOut(nil)
         }
     }
 
-    func update(text: String) {
-        textField.stringValue = text
-    }
+    var currentText: String { label.stringValue }
 
-    func hide() {
-        NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.15
-            panel.animator().alphaValue = 0
-        }, completionHandler: {
-            self.panel.orderOut(nil)
-        })
-    }
+    // MARK: - Private
 
-    var currentText: String {
-        textField.stringValue
+    private func repositionPanel(cursorRect: NSRect) {
+        let panelWidth = min(label.frame.width + 6, 600)
+        let panelHeight = cursorRect.height + 2
+        let panelSize = NSSize(width: panelWidth, height: panelHeight)
+        let origin = OverlayPositioner.inlineOrigin(cursorRect: cursorRect, panelSize: panelSize)
+        panel.setFrame(NSRect(origin: origin, size: panelSize), display: false)
+        label.frame = NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight)
     }
 }
