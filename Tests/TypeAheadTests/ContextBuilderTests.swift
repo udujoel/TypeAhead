@@ -36,17 +36,18 @@ import Testing
         #expect(clipboardSectionCount == 1)
     }
 
-    @Test func customInstructionsInjectedFirst() {
+    @Test func customInstructionsInjectedInsideFIMPrefix() {
         let instructions = "Always write in UK English."
         let ctx = TextContext(textBeforeCursor: String(repeating: "word ", count: 20), textAfterCursor: "", appName: "Notes", windowTitle: "")
         let result = ContextBuilder.buildPrompt(context: ctx, clipboard: nil, history: [], customInstructions: instructions)
+        // Instructions must be present and appear before the suffix token (inside the FIM prefix section)
         let instrRange = result.range(of: instructions)
-        let fimRange = result.range(of: "<|fim_prefix|>")
-        guard let i = instrRange, let f = fimRange else {
-            Issue.record("Expected both instruction and FIM markers")
+        let suffixRange = result.range(of: "<|fim_suffix|>")
+        guard let i = instrRange, let s = suffixRange else {
+            Issue.record("Expected both instruction and FIM suffix markers")
             return
         }
-        #expect(i.lowerBound < f.lowerBound)
+        #expect(i.lowerBound < s.lowerBound)
     }
 
     @Test func historyExamplesInjectedAsPrefix() {

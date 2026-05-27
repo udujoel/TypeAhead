@@ -6,7 +6,7 @@ struct TypoFix: Sendable {
 }
 
 enum TypoDetector {
-    private static let checker = NSSpellChecker.shared
+    nonisolated(unsafe) private static let checker = NSSpellChecker.shared
 
     static func check(word: String) -> TypoFix? {
         guard word.count > 1 else { return nil }

@@ -6,7 +6,7 @@ final class AccessibilityManager {
 
     // MARK: - Pure Logic (testable without AX permission)
 
-    static func split(text: String, at position: Int) -> (before: String, after: String) {
+    nonisolated static func split(text: String, at position: Int) -> (before: String, after: String) {
         let clamped = max(0, min(position, text.count))
         let idx = text.index(text.startIndex, offsetBy: clamped)
         return (String(text[..<idx]), String(text[idx...]))
@@ -34,17 +34,21 @@ final class AccessibilityManager {
 
     func cursorScreenRect() -> NSRect? {
         guard let element = focusedTextElement() else { return nil }
+        var cfRange = CFRange(
+            location: element.selectedRange?.location ?? 0,
+            length: 0
+        )
+        guard let rangeValue = AXValueCreate(.cfRange, &cfRange) else { return nil }
         var rect: CFTypeRef?
-        let selRange = (element.selectedRange.map { NSValue(range: $0) } ?? NSValue(range: NSRange(location: 0, length: 0))) as AnyObject
         guard AXUIElementCopyParameterizedAttributeValue(
             element,
             kAXBoundsForRangeParameterizedAttribute as CFString,
-            selRange,
+            rangeValue,
             &rect
         ) == .success, let axRect = rect else { return nil }
         var screenRect = CGRect.zero
         AXValueGetValue(axRect as! AXValue, .cgRect, &screenRect)
-        return NSRect(cgRect: screenRect)
+        return screenRect
     }
 
     // MARK: - Helpers
@@ -65,7 +69,7 @@ final class AccessibilityManager {
     private func isPasswordField(_ element: AXUIElement) -> Bool {
         var role: CFTypeRef?
         AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
-        return (role as? String) == kAXPasswordFieldRole as String
+        return (role as? String) == "AXPasswordField"
     }
 
     private func focusedWindowTitle() -> String? {

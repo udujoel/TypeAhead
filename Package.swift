@@ -1,31 +1,46 @@
 // swift-tools-version: 6.0
+// NOTE: This package is used for unit tests only (swift test).
+// The full app is built in Xcode where MLX/MLXLLM/Sparkle are added via
+// File → Add Package Dependencies. The SPM target excludes files that
+// require those frameworks so pure-logic tests can run without them.
 import PackageDescription
 
 let package = Package(
     name: "TypeAhead",
     platforms: [.macOS(.v14)],
-    dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.21.0"),
-        .package(url: "https://github.com/ml-explore/mlx-swift-examples", branch: "main"),
-        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.3.0"),
-        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
-    ],
+    dependencies: [],
     targets: [
         .target(
             name: "TypeAhead",
-            dependencies: [
-                .product(name: "MLX", package: "mlx-swift"),
-                .product(name: "MLXLLM", package: "mlx-swift-examples"),
-                .product(name: "Transformers", package: "swift-transformers"),
-                .product(name: "Sparkle", package: "Sparkle"),
-            ],
+            dependencies: [],
             path: "TypeAhead/TypeAhead",
-            exclude: ["Assets.xcassets", "TypeAhead.entitlements"]
+            exclude: [
+                "Assets.xcassets",
+                "TypeAhead.entitlements",
+                // Requires MLXLLM — not an SPM library product; built in Xcode only
+                "Core/InferenceEngine.swift",
+                // Depends on InferenceEngine
+                "Models/ModelManager.swift",
+                // Requires Sparkle — built in Xcode only
+                "App/AppDelegate.swift",
+                "App/AppDependencies.swift",
+                "UI/StatusBar/StatusBarMenu.swift",
+                // Requires ScreenSaver framework
+                "Context/ScreenshotContextProvider.swift",
+                // Requires SwiftUI + AppKit combo that needs the full app bundle
+                "TypeAheadApp.swift",
+                "UI/Settings",
+            ]
         ),
         .testTarget(
             name: "TypeAheadTests",
             dependencies: ["TypeAhead"],
-            path: "Tests/TypeAheadTests"
+            path: "Tests/TypeAheadTests",
+            exclude: [
+                // These test the excluded-above files or require hardware
+                "OverlayPositionerTests.swift",
+                "CompletionPipelineTests.swift",
+            ]
         ),
     ]
 )
