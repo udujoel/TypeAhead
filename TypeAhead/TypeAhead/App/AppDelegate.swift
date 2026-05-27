@@ -11,28 +11,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             pipeline: deps.completionPipeline
         )
 
+        // Any keystroke hides the current overlay and queues a new completion.
         deps.keyMonitor.onKeystroke = { [weak deps] _ in
+            deps?.keyMonitor.isOverlayVisible = false
+            deps?.inferenceEngine.cancelCurrent()
+            deps?.completionOverlay.hide(animated: false)  // instant — no stale text flicker
             deps?.completionPipeline.keystrokeReceived()
         }
+
+        // Tab (or Shift-Tab for word-by-word) — accept the next word of the completion.
         deps.keyMonitor.onTabPressed = { [weak deps] in
             guard let deps else { return }
+            deps.keyMonitor.isOverlayVisible = false
+
             let nextWord = deps.completionOverlay.currentText
                 .split(separator: " ", maxSplits: 1)
                 .first
                 .map(String.init) ?? ""
-            if !nextWord.isEmpty, let element = deps.accessibilityManager.focusedElement() {
-                deps.accessibilityManager.insertCompletion(nextWord + " ", into: element)
+
+            if !nextWord.isEmpty {
+                let injection = nextWord + " "
+
+                // Try Accessibility injection (precise — replaces selection).
+                // Fall back to CGEvent injection (types the characters directly).
+                if let element = deps.accessibilityManager.focusedElement() {
+                    deps.accessibilityManager.insertCompletion(injection, into: element)
+                } else {
+                    deps.accessibilityManager.injectText(injection)
+                }
+
+                // Keep the keystroke buffer consistent with what was accepted.
+                deps.keyMonitor.keystrokeBuffer.appendAccepted(injection)
+
                 Task { @MainActor in
-                    try? await deps.historyStore.record(accepted: nextWord, appName: "")
+                    try? deps.historyStore.record(accepted: nextWord, appName: "")
                 }
             }
+
             deps.inferenceEngine.cancelCurrent()
             deps.completionOverlay.hide()
         }
+
         deps.keyMonitor.onDismiss = { [weak deps] in
+            deps?.keyMonitor.isOverlayVisible = false
             deps?.inferenceEngine.cancelCurrent()
-            deps?.completionOverlay.hide()
+            deps?.completionOverlay.hide(animated: true)  // gentle fade on Escape
         }
+
         deps.keyMonitor.start()
 
         Task { @MainActor in

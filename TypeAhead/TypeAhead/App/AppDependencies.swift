@@ -18,11 +18,28 @@ final class AppDependencies {
     }
     let keyMonitor = KeyEventMonitor()
 
-    // Accumulates streamed tokens on the main actor — avoids Sendable mutation issue
+    // Accumulates streamed tokens on the main actor
     private var currentCompletion = ""
 
     private func runCompletion() async {
-        guard let context = accessibilityManager.readTextContext() else { return }
+        print("🔵 runCompletion called — isLoaded=\(inferenceEngine.isLoaded)")
+
+        // Try AX first; fall back to keystroke buffer if AX isn't trusted yet.
+        let context: TextContext
+        if let axContext = accessibilityManager.readTextContext() {
+            print("🟢 context via AX: app=\(axContext.appName), before='\(axContext.textBeforeCursor.suffix(40))'")
+            context = axContext
+        } else {
+            let bufferText = keyMonitor.keystrokeBuffer.text
+            guard bufferText.count >= 8 else {
+                print("🔴 context too short — re-grant Accessibility in System Settings")
+                return
+            }
+            let appName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
+            context = TextContext(textBeforeCursor: bufferText, textAfterCursor: "", appName: appName, windowTitle: "")
+            print("🟡 context via keystroke buffer: '\(bufferText.suffix(40))'")
+        }
+
         let history = await historyStore.recentAcceptedPhrases(limit: 5)
         let clipboard = settings.useClipboardContext ? ClipboardContextProvider.current() : nil
         let prompt = ContextBuilder.buildPrompt(
@@ -32,22 +49,29 @@ final class AppDependencies {
             customInstructions: settings.customInstructions
         )
         currentCompletion = ""
-        let cursorRect = accessibilityManager.cursorScreenRect() ?? .zero
+
+        guard let cursorRect = accessibilityManager.cursorScreenRect() else { return }
+        let fontSize = accessibilityManager.focusedFontSize()
+        print("🟡 inferenceEngine.complete — prompt length=\(prompt.count), cursor=\(cursorRect)")
+
         inferenceEngine.complete(
             prompt: prompt,
             maxTokens: settings.completionLength.maxTokens
         ) { [weak self] token in
-            // Dispatch back to the main actor so we can safely mutate currentCompletion
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let isFirstToken = currentCompletion.isEmpty
                 currentCompletion += token
+                print("🟣 token: '\(token)'")
                 if isFirstToken {
-                    completionOverlay.show(text: currentCompletion, near: cursorRect)
+                    completionOverlay.show(text: currentCompletion, near: cursorRect, fontSize: fontSize)
+                    keyMonitor.isOverlayVisible = true
                 } else {
-                    completionOverlay.update(text: currentCompletion)
+                    completionOverlay.update(text: currentCompletion, near: cursorRect)
                 }
             }
-        } onComplete: {}
+        } onComplete: {
+            print("✅ onComplete fired")
+        }
     }
 }
