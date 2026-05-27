@@ -8,11 +8,13 @@ struct TextContext: Sendable {
 }
 
 enum ContextBuilder {
-    private static let fimThresholdChars = 50
-    private static let maxClipboardChars = 400
-    private static let maxSuffixChars = 100
-    private static let maxPrefixChars = 200
+    private static let maxPrefixChars    = 200  // smaller = faster first token on small models
+    private static let maxSuffixChars    = 60
+    private static let maxHistoryItems   = 2
+    private static let maxClipboardChars = 200
 
+    /// Builds a concise prompt for an instruction-following model.
+    /// The system prompt in `InferenceEngine` defines the task; this supplies raw context only.
     static func buildPrompt(
         context: TextContext,
         clipboard: String?,
@@ -21,32 +23,37 @@ enum ContextBuilder {
     ) -> String {
         var parts: [String] = []
 
+        // App + window helps the model match register (Slack vs Terminal vs Pages)
+        if !context.appName.isEmpty {
+            var appLine = "[\(context.appName)"
+            if !context.windowTitle.isEmpty { appLine += " — \(context.windowTitle)" }
+            appLine += "]"
+            parts.append(appLine)
+        }
+
         if !customInstructions.isEmpty {
-            parts.append(customInstructions)
+            parts.append("[\(customInstructions)]")
         }
 
-        if !history.isEmpty {
-            parts.append("Examples of your writing style:")
-            parts.append(contentsOf: history.prefix(5))
+        let recent = Array(history.prefix(maxHistoryItems))
+        if !recent.isEmpty {
+            parts.append("[style: \(recent.joined(separator: " | "))]")
         }
 
-        let appContext = "App: \(context.appName)\(context.windowTitle.isEmpty ? "" : " — \(context.windowTitle)")"
-        parts.append(appContext)
-
-        if let clip = clipboard, !clip.isEmpty {
-            let trimmed = String(clip.prefix(maxClipboardChars))
-            parts.append("Clipboard context: \(trimmed)")
+        if let clip = clipboard, clip.count > 10 {
+            parts.append("[context: \(String(clip.prefix(maxClipboardChars)))]")
         }
 
+        // The text to complete — this is the primary signal for the model
         let prefix = String(context.textBeforeCursor.suffix(maxPrefixChars))
-        let suffix = String(context.textAfterCursor.prefix(maxSuffixChars))
+        parts.append(prefix)
 
-        if context.textBeforeCursor.count >= fimThresholdChars {
-            let header = parts.joined(separator: "\n")
-            return "<|fim_prefix|>\(header)\n\(prefix)<|fim_suffix|>\(suffix)<|fim_middle|>"
-        } else {
-            parts.append(prefix)
-            return parts.joined(separator: "\n")
+        // Suffix hint helps the model bridge the completion to what follows
+        if !context.textAfterCursor.isEmpty {
+            let suffix = String(context.textAfterCursor.prefix(maxSuffixChars))
+            parts.append("<CURSOR>\(suffix)")
         }
+
+        return parts.joined(separator: "\n")
     }
 }
