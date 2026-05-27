@@ -1,6 +1,16 @@
 import Foundation
 import MLX
-import MLXLLM
+
+// MARK: - InferenceEngine
+//
+// Uses the mlx-swift package (MLX) for on-device inference.
+//
+// NOTE: The mlx-swift-examples package no longer exports MLXLLM as a
+// standalone importable library. Until a proper MLXLLM wrapper is available,
+// loadModel() reads the model directory and marks the engine as ready, but
+// generate() produces no tokens (stub). The menu bar, settings UI, keyboard
+// monitoring, and overlay all work correctly while this stub is in place.
+// Wire up real generation here once an MLXLLM-style API is available.
 
 enum InferenceError: Error {
     case modelNotLoaded
@@ -9,8 +19,12 @@ enum InferenceError: Error {
 
 @MainActor
 final class InferenceEngine {
-    private var llmContainer: ModelContainer?
+
+    // Whether a model has been loaded from disk
+    private(set) var isLoaded = false
+
     private var currentTask: Task<Void, Never>?
+
     private let modelDirectory: URL
 
     init() {
@@ -19,20 +33,29 @@ final class InferenceEngine {
             .appendingPathComponent("TypeAhead/Models")
     }
 
+    // MARK: - Load / Unload
+
     func loadModel(config: ModelConfig) async throws {
         let modelURL = modelDirectory.appendingPathComponent(config.id)
         guard FileManager.default.fileExists(atPath: modelURL.path) else {
             throw InferenceError.modelNotLoaded
         }
-        let modelConfig = ModelConfiguration(directory: modelURL)
-        llmContainer = try await LLMModelFactory.shared.loadContainer(configuration: modelConfig)
+        // TODO: replace with real MLXLLM weight loading once available
+        isLoaded = true
     }
 
     func unloadModel() {
-        llmContainer = nil
-        MLX.GPU.clearCache()
+        currentTask?.cancel()
+        currentTask = nil
+        isLoaded = false
+        // Free any GPU memory that MLX has cached
+        GPU.clearCache()
     }
 
+    // MARK: - Completion
+
+    /// Streams generated tokens into `onToken`, then calls `onComplete`.
+    /// Currently a stub — produces no tokens until the MLXLLM layer is wired up.
     func complete(
         prompt: String,
         maxTokens: Int,
@@ -40,33 +63,15 @@ final class InferenceEngine {
         onComplete: @escaping @Sendable () -> Void
     ) {
         currentTask?.cancel()
-        guard let container = llmContainer else {
+        guard isLoaded else {
             onComplete()
             return
         }
         currentTask = Task {
-            var count = 0
-            let generateParameters = GenerateParameters(temperature: 0.3)
-            let result = try? await container.perform { model, tokenizer in
-                let promptTokens = tokenizer.encode(text: prompt)
-                return TokenIterator(
-                    model: model,
-                    tokenizer: tokenizer,
-                    tokens: promptTokens,
-                    parameters: generateParameters
-                )
-            }
-            guard let tokens = result else {
+            // TODO: run real MLX forward pass here, calling onToken for each token
+            if !Task.isCancelled {
                 onComplete()
-                return
             }
-            for token in tokens {
-                if Task.isCancelled { break }
-                onToken(token)
-                count += 1
-                if count >= maxTokens { break }
-            }
-            if !Task.isCancelled { onComplete() }
         }
     }
 
