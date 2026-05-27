@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 @MainActor
 final class AppDependencies {
@@ -18,6 +18,9 @@ final class AppDependencies {
     }
     let keyMonitor = KeyEventMonitor()
 
+    // Accumulates streamed tokens on the main actor — avoids Sendable mutation issue
+    private var currentCompletion = ""
+
     private func runCompletion() async {
         guard let context = accessibilityManager.readTextContext() else { return }
         let history = await historyStore.recentAcceptedPhrases(limit: 5)
@@ -28,17 +31,21 @@ final class AppDependencies {
             history: history,
             customInstructions: settings.customInstructions
         )
-        var accumulated = ""
+        currentCompletion = ""
         let cursorRect = accessibilityManager.cursorScreenRect() ?? .zero
-        inferenceEngine.complete(prompt: prompt, maxTokens: settings.completionLength.maxTokens) { [weak self] token in
-            guard let self else { return }
-            accumulated += token
+        inferenceEngine.complete(
+            prompt: prompt,
+            maxTokens: settings.completionLength.maxTokens
+        ) { [weak self] token in
+            // Dispatch back to the main actor so we can safely mutate currentCompletion
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if accumulated.count == token.count {
-                    completionOverlay.show(text: accumulated, near: cursorRect)
+                let isFirstToken = currentCompletion.isEmpty
+                currentCompletion += token
+                if isFirstToken {
+                    completionOverlay.show(text: currentCompletion, near: cursorRect)
                 } else {
-                    completionOverlay.update(text: accumulated)
+                    completionOverlay.update(text: currentCompletion)
                 }
             }
         } onComplete: {}
