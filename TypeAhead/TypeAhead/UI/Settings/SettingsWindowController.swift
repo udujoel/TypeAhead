@@ -9,8 +9,10 @@ final class SettingsWindowController: NSWindowController {
     static let shared = SettingsWindowController()
 
     private init() {
+        let deps = AppDependencies.shared
         let rootView = SettingsWindow()
-            .environment(AppDependencies.shared.settings)
+            .environment(deps.settings)
+            .environment(deps.modelManager)
         let hosting = NSHostingController(rootView: rootView)
         let window = NSWindow(contentViewController: hosting)
         window.title = "TypeAhead Settings"

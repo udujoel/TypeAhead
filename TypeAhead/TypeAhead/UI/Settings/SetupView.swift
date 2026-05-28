@@ -4,20 +4,21 @@ import ApplicationServices
 
 struct SetupView: View {
     @Environment(AppSettings.self) private var settings
+    @Environment(ModelManager.self) private var modelManager
 
     @State private var accessibilityGranted = false
     @State private var inputMonitoringGranted = false
     @State private var screenRecordingGranted = false
-    @State private var modelLoaded = false
 
     private var allReady: Bool {
-        accessibilityGranted && inputMonitoringGranted && modelLoaded
+        accessibilityGranted && inputMonitoringGranted && modelManager.isAnyModelActive
     }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                // ── Header ─────────────────────────────────────
+            VStack(alignment: .leading, spacing: 12) {
+
+                // ── Header ──────────────────────────────────────
                 HStack(spacing: 14) {
                     Image(systemName: allReady ? "checkmark.circle.fill" : "gearshape.circle.fill")
                         .font(.system(size: 36))
@@ -32,7 +33,7 @@ struct SetupView: View {
                             .font(.subheadline)
                     }
                 }
-                .padding(.bottom, 8)
+                .padding(.bottom, 4)
 
                 // ── Accessibility ───────────────────────────────
                 RequirementRow(
@@ -42,54 +43,45 @@ struct SetupView: View {
                 ) {
                     if !accessibilityGranted {
                         Button("Grant Access") { openAccessibilitySettings() }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
+                            .buttonStyle(.borderedProminent).controlSize(.small)
                     }
                 }
 
                 // ── Input Monitoring ────────────────────────────
                 RequirementRow(
                     title: "Input Monitoring Permission",
-                    description: "Required to detect keystrokes in other apps so completions can trigger while you type.",
+                    description: "Required to detect keystrokes in other apps.",
                     badge: inputMonitoringGranted ? .granted : .required
                 ) {
                     if !inputMonitoringGranted {
                         Button("Grant Access") { openInputMonitoringSettings() }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
+                            .buttonStyle(.borderedProminent).controlSize(.small)
                     }
                 }
 
                 // ── Screen Recording ────────────────────────────
                 RequirementRow(
-                    title: "Screen Recording Permission",
-                    description: "Recommended for richer context-aware suggestions. Screenshots are processed on-device and never stored.",
+                    title: "Screen Recording",
+                    description: "Optional — for richer context-aware suggestions. Processed on-device, never stored.",
                     badge: screenRecordingGranted ? .granted : .optional
                 ) {
                     if !screenRecordingGranted {
                         Button("Grant Access") { openScreenRecordingSettings() }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            .buttonStyle(.bordered).controlSize(.small)
                     }
                 }
 
-                // ── On-Device MLX Model ─────────────────────────
-                RequirementRow(
-                    title: "On-Device Model",
-                    description: modelLoaded
-                        ? "MLX model loaded and ready. All inference runs on-device."
-                        : "Model is downloading in the background on first launch. Check General → Model for status.",
-                    badge: modelLoaded ? .granted : .required
-                ) { EmptyView() }
+                // ── On-Device Model ─────────────────────────────
+                ModelDownloadRow(modelManager: modelManager, settings: settings)
 
                 // ── Clipboard Context ───────────────────────────
                 RequirementRow(
                     title: "Clipboard Context",
-                    description: "Helps TypeAhead make more relevant suggestions based on what you've copied.",
+                    description: "Lets TypeAhead read your clipboard for more relevant suggestions.",
                     badge: settings.useClipboardContext ? .enabled : .disabled
                 ) { EmptyView() }
             }
-            .padding(32)
+            .padding(28)
         }
         .onAppear { checkPermissions() }
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
@@ -97,53 +89,120 @@ struct SetupView: View {
         }
     }
 
-    // MARK: - Helpers
-
     private func checkPermissions() {
         accessibilityGranted   = AXIsProcessTrusted()
         inputMonitoringGranted = CGPreflightListenEventAccess()
         screenRecordingGranted = CGPreflightScreenCaptureAccess()
-        modelLoaded            = AppDependencies.shared.inferenceEngine.isLoaded
     }
 
     private func openAccessibilitySettings() {
         NSWorkspace.shared.open(
-            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
-        )
+            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
     }
-
     private func openInputMonitoringSettings() {
         NSWorkspace.shared.open(
-            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!
-        )
+            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
     }
-
     private func openScreenRecordingSettings() {
         NSWorkspace.shared.open(
-            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!
-        )
+            URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
     }
 }
 
-// MARK: - Reusable requirement card
+// MARK: - Model download row (live progress)
+
+private struct ModelDownloadRow: View {
+    let modelManager: ModelManager
+    let settings: AppSettings
+
+    private var activeConfig: ModelConfig {
+        ModelConfig.all.first { $0.id == settings.activeModelID } ?? ModelConfig.defaultModel
+    }
+
+    var body: some View {
+        let status = modelManager.status(for: activeConfig)
+
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("On-Device Model")
+                        .fontWeight(.medium)
+                    Text(activeConfig.displayName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 16)
+                modelStatusBadge(status)
+            }
+
+            // Progress bar — only visible while downloading
+            if case .downloading(let progress) = status {
+                VStack(alignment: .leading, spacing: 4) {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                        .tint(.blue)
+                    Text(String(format: "%d%% — %.1f GB of %.1f GB",
+                                Int(progress * 100),
+                                activeConfig.fileSizeGB * progress,
+                                activeConfig.fileSizeGB))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, 10)
+            }
+
+            // Download button — only when not yet started
+            if status == .notDownloaded {
+                Button("Download \(activeConfig.displayName)") {
+                    Task { await modelManager.downloadAndActivate(config: activeConfig) }
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .padding(.top, 10)
+            }
+        }
+        .padding()
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private func modelStatusBadge(_ status: ModelStatus) -> some View {
+        switch status {
+        case .notDownloaded:
+            Text("Not Downloaded")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        case .downloading(let p):
+            Text("\(Int(p * 100))%")
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(.blue)
+        case .loading:
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Loading…").font(.callout).foregroundStyle(.secondary)
+            }
+        case .active:
+            Label("Active", systemImage: "checkmark.circle.fill")
+                .font(.callout)
+                .foregroundStyle(.green)
+        }
+    }
+}
+
+// MARK: - Shared requirement row
 
 private enum BadgeStyle {
     case granted, required, optional, enabled, disabled
-
     var label: String {
         switch self {
-        case .granted:  "Granted"
-        case .required: "Required"
-        case .optional: "Optional"
-        case .enabled:  "Enabled"
-        case .disabled: "Disabled"
+        case .granted: "Granted"; case .required: "Required"
+        case .optional: "Optional"; case .enabled: "Enabled"; case .disabled: "Disabled"
         }
     }
-
     var color: Color {
         switch self {
-        case .granted, .enabled:  .green
-        case .required:           .orange
+        case .granted, .enabled: .green
+        case .required: .orange
         case .optional, .disabled: .secondary
         }
     }
@@ -159,15 +218,11 @@ private struct RequirementRow<Trailing: View>: View {
         HStack(alignment: .top, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title).fontWeight(.medium)
-                Text(description)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Text(description).font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 16)
             VStack(alignment: .trailing, spacing: 6) {
-                Text(badge.label)
-                    .font(.callout)
-                    .foregroundStyle(badge.color)
+                Text(badge.label).font(.callout).foregroundStyle(badge.color)
                 trailing()
             }
         }
