@@ -45,9 +45,11 @@ final class AccessibilityManager {
     func focusedFontSize() -> CGFloat {
         guard let element = focusedTextElement() else { return 14 }
         var fontRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, kAXFontAttribute as CFString, &fontRef) == .success,
+        // "AXFont" / "AXFontSize" are the raw string values of kAXFontAttribute / kAXFontSizeKey.
+        // The C constants are Unmanaged<CFString> and can't be cast in Swift — use literals instead.
+        guard AXUIElementCopyAttributeValue(element, "AXFont" as CFString, &fontRef) == .success,
               let fontDict = fontRef as? [String: Any],
-              let size = fontDict[kAXFontSizeKey as String] as? CGFloat,
+              let size = fontDict["AXFontSize"] as? CGFloat,
               size > 4 else {
             return 14
         }
