@@ -104,18 +104,22 @@ private struct ModelRow: View {
     private func actionButton(_ status: ModelStatus) -> some View {
         switch status {
         case .notDownloaded:
-            // "Activate" if files are already on disk (fast load), "Download" if not
-            let label = ModelManager.isModelCached(repoId: config.huggingFaceRepo)
-                ? "Activate" : "Download"
-            Button(label) {
-                isActioning = true
-                Task {
-                    await modelManager.downloadAndActivate(config: config)
-                    isActioning = false
+            // "Activate" (fast load from disk) vs "Download" (needs network)
+            if ModelManager.isModelCached(repoId: config.huggingFaceRepo) {
+                Button("Activate") {
+                    isActioning = true
+                    Task { await modelManager.downloadAndActivate(config: config); isActioning = false }
                 }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+            } else {
+                Button("Download") {
+                    isActioning = true
+                    Task { await modelManager.downloadAndActivate(config: config); isActioning = false }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
-            .buttonStyle(label == "Activate" ? .borderedProminent : .bordered)
-            .controlSize(.small)
 
         case .active, .downloading, .loading:
             EmptyView()
