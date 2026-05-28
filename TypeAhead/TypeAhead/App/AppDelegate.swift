@@ -60,9 +60,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         deps.keyMonitor.start()
 
+        // Load (and download if needed) the user's chosen model on startup.
+        // ModelManager streams progress into its statuses dict, which the UI observes.
         Task { @MainActor in
-            let config = ModelConfig.recommended(availableRAMGB: Self.availableRAMGB())
-            try? await deps.inferenceEngine.loadModel(config: config)
+            let config = ModelConfig.all.first { $0.id == deps.settings.activeModelID }
+                ?? ModelConfig.recommended(availableRAMGB: Self.availableRAMGB())
+            await deps.modelManager.downloadAndActivate(config: config)
         }
     }
 

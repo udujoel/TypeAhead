@@ -9,6 +9,7 @@ final class AppDependencies {
     let inferenceEngine = InferenceEngine()
     let completionOverlay = CompletionOverlay()
     let historyStore = HistoryStore()
+    lazy var modelManager = ModelManager(inferenceEngine: inferenceEngine, settings: settings)
     lazy var personalizationEngine = PersonalizationEngine(historyStore: historyStore)
     lazy var completionPipeline: CompletionPipeline = CompletionPipeline(
         debounceInterval: settings.completionDelay,
