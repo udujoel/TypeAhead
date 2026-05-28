@@ -70,10 +70,7 @@ final class ModelManager {
             statuses[config.id] = .active
             settings.activeModelID = config.id
         } catch {
-            // Roll back to whatever the cached state is
-            statuses[config.id] = Self.isModelCached(repoId: config.huggingFaceRepo)
-                ? .notDownloaded
-                : .notDownloaded
+            statuses[config.id] = .notDownloaded
         }
     }
 
@@ -81,9 +78,8 @@ final class ModelManager {
 
     private func refreshStatuses() {
         for config in ModelConfig.all {
-            let cached = Self.isModelCached(repoId: config.huggingFaceRepo)
             let isActiveLoaded = config.id == settings.activeModelID && inferenceEngine.isLoaded
-            statuses[config.id] = isActiveLoaded ? .active : (cached ? .notDownloaded : .notDownloaded)
+            statuses[config.id] = isActiveLoaded ? .active : .notDownloaded
         }
     }
 
