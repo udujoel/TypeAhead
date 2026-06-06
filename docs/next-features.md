@@ -192,6 +192,36 @@ visible in the window) and stay within latency budget; off by default; clearly d
 
 ---
 
+## 7. Suggest punctuation (?, !, parentheses, etc.)
+
+**Problem.** Suggestions are words only. They should also propose **punctuation** where it
+fits — question mark after an interrogative ("How are you" → "?"), exclamation, closing
+parenthesis/quote/bracket, comma, period, colon, etc.
+
+**Current state.** The model already emits punctuation sometimes (logs show `.`, `?`, `,`
+ghosts), but the sanitizer, word-cap, and spacing logic are tuned for words; punctuation
+isn't handled deliberately.
+
+**Proposed design.**
+- **Keep punctuation suggestions.** Make sure `CompletionTextSanitizer`/`GhostText` and the
+  `maxWords` cap don't drop a leading/standalone punctuation suggestion (a bare "?" or " — ").
+- **Punctuation spacing.** Closing/terminal punctuation (`?!.,:;)`]}` and closing quotes)
+  attaches with **no** leading space; opening punctuation (`([{` and opening quotes) takes a
+  leading space after a word. Extend the leading-space logic in `GhostText`/`onTabPressed`.
+- **Auto-close pairs (optional).** Typing an opening `(`, `[`, `{`, or quote suggests the
+  matching close.
+- **Acceptance/insert.** Tab inserts the punctuation; closers get no trailing space (or a
+  single space only when a new clause follows).
+
+**Files.** `CompletionTextSanitizer.swift`, `GhostText.swift`, `AppDelegate.onTabPressed`
+(punctuation-aware spacing), possibly `ContextBuilder` (don't trim a clause boundary that
+suppresses punctuation).
+**Effort.** Small–medium. **Risk.** Spacing edge cases ("word ?" vs "word?").
+**Acceptance.** "How are you" suggests "?"; "(note" suggests ")"; punctuation attaches with no
+stray leading space.
+
+---
+
 ## Cross-cutting notes
 - Keep everything **on-device** and **no-network for completions** (project rules).
 - Mind the latency targets (P50 < 80ms, P95 < 250ms) when adding prompt context (3, 4, 6).
