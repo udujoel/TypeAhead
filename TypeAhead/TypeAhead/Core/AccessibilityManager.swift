@@ -23,8 +23,9 @@ final class AccessibilityManager {
     /// can flip it on. Call once at launch.
     @discardableResult
     func promptForTrustIfNeeded() -> Bool {
-        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        return AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+        // Literal value of kAXTrustedCheckOptionPrompt — the C global is a non-Sendable
+        // `var` that Swift 6 strict concurrency rejects (same reason we use "AXFont" etc.).
+        AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
     }
 
     /// Whether a debugger (Xcode/LLDB) is attached. When it is, macOS treats the debugger

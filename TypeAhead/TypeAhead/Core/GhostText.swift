@@ -32,7 +32,27 @@ enum GhostText {
         if maxWords > 0 {
             continuation = clampWords(continuation, maxWords)
         }
+
+        // Preserve the word separator. If the model started a NEW word (its raw output
+        // began with whitespace) and the text before the cursor doesn't already end with
+        // a space, prepend one — so "work" + "for" reads "work for", not "workfor". When
+        // the model continues the current word ("wor" + "king"), no space is added.
+        if !continuation.isEmpty, isFillInMiddle, rawBeginsNewWord(raw), !endsWithWhitespace(typed) {
+            continuation = " " + continuation
+        }
         return continuation
+    }
+
+    /// True if the model's continuation starts a new word (first non-newline char is a space).
+    private static func rawBeginsNewWord(_ raw: String) -> Bool {
+        for ch in raw where ch != "\n" && ch != "\r" {
+            return ch == " " || ch == "\t"
+        }
+        return false
+    }
+
+    private static func endsWithWhitespace(_ s: String) -> Bool {
+        s.last.map { $0 == " " || $0 == "\n" || $0 == "\t" } ?? true
     }
 
     /// Keeps at most `maxWords` space-separated words.

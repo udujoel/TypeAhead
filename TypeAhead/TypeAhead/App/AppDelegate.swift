@@ -44,14 +44,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         deps.keyMonitor.onTabPressed = { [weak deps] in
             guard let deps else { return }
             let ghost = deps.completionOverlay.currentText
-            let parts = ghost.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+            // The ghost may carry a leading space (a new word after a non-space prefix);
+            // preserve it on insert so the word separator isn't lost.
+            let leading = ghost.hasPrefix(" ") ? " " : ""
+            let body = leading.isEmpty ? ghost : String(ghost.dropFirst())
+            let parts = body.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
             guard let firstWord = parts.first.map(String.init), !firstWord.isEmpty else {
                 deps.keyMonitor.isOverlayVisible = false
                 deps.completionOverlay.hide()
                 return
             }
 
-            let injection = firstWord + " "
+            let injection = leading + firstWord + " "
             if let element = deps.accessibilityManager.focusedElement() {
                 deps.accessibilityManager.insertCompletion(injection, into: element)
             } else {

@@ -80,6 +80,23 @@ import Testing
     @Test func clampWordsLeavesShortTextAlone() {
         #expect(GhostText.clampWords("just two", 4) == "just two")
     }
+
+    // MARK: - Word-separator spacing (raw continuation)
+
+    @Test func newWordAfterNonSpacePrefixGetsLeadingSpace() {
+        // "Is this work" + model " for you" → show/insert " for you" (space before "for").
+        #expect(GhostText.build(typed: "Is this work", raw: " for you", isFillInMiddle: true) == " for you")
+    }
+
+    @Test func continuingCurrentWordGetsNoLeadingSpace() {
+        // "wor" + model "king" → "king" (completes the word, no space).
+        #expect(GhostText.build(typed: "wor", raw: "king", isFillInMiddle: true) == "king")
+    }
+
+    @Test func newWordAfterSpacePrefixGetsNoExtraSpace() {
+        // Prefix already ends with a space → don't double it.
+        #expect(GhostText.build(typed: "working for ", raw: " you", isFillInMiddle: true) == "you")
+    }
 }
 
 @Suite struct CompletionTextSanitizerTests {
