@@ -190,7 +190,18 @@ final class AccessibilityManager {
     }
 
     private func axCursorRect(for element: AXUIElement) -> NSRect? {
-        var cfRange = CFRange(location: element.selectedRange?.location ?? 0, length: 0)
+        let caret = element.selectedRange?.location ?? 0
+        // A real glyph gives a reliable rect; an empty range at the caret can report the
+        // line's top-left instead of the glyph. Prefer the char just before the caret and
+        // use its trailing edge as the insertion point; fall back to the empty range.
+        if caret > 0, let glyph = boundsForRange(element, location: caret - 1, length: 1), glyph.height > 0 {
+            return NSRect(x: glyph.maxX, y: glyph.origin.y, width: 0, height: glyph.height)
+        }
+        return boundsForRange(element, location: caret, length: 0)
+    }
+
+    private func boundsForRange(_ element: AXUIElement, location: Int, length: Int) -> NSRect? {
+        var cfRange = CFRange(location: location, length: length)
         guard let rangeValue = AXValueCreate(.cfRange, &cfRange) else { return nil }
         var rect: CFTypeRef?
         guard AXUIElementCopyParameterizedAttributeValue(

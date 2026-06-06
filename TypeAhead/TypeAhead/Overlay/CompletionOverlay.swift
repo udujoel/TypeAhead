@@ -73,5 +73,11 @@ final class CompletionOverlay {
         let origin = OverlayPositioner.inlineOrigin(cursorRect: cursorRect, panelSize: panelSize)
         panel.setFrame(NSRect(origin: origin, size: panelSize), display: false)
         label.frame = NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight)
+        if !Self.didLogFrame {
+            Self.didLogFrame = true
+            print("🖼️ panel.frame=\(panel.frame) for caret=\(cursorRect) (compare panel.y to caret.y — equal means coords ok, offset means render)")
+        }
     }
+
+    private static var didLogFrame = false
 }

@@ -6,8 +6,10 @@ enum OverlayPositioner {
     /// `cursorRect` uses screen coordinates (bottom-left origin, Y increases upward).
     static func inlineOrigin(cursorRect: NSRect, panelSize: NSSize) -> NSPoint {
         let x = cursorRect.maxX
-        // Align panel bottom to cursor bottom; -1 compensates for internal NSTextField padding
-        let y = cursorRect.minY - 1
+        // The AX caret rect (kAXBoundsForRange) sits ~one glyph-height above where the text
+        // actually renders in TextEdit-style views, so the overlay appeared a line too high.
+        // Drop it by the glyph height so the ghost lands on the text baseline.
+        let y = cursorRect.minY - cursorRect.height
 
         // Pick the screen the cursor is on; fall back to main screen
         let screen = NSScreen.screens.first {
