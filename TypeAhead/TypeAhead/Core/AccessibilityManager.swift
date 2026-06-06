@@ -18,6 +18,28 @@ final class AccessibilityManager {
     /// in Xcode changes the binary and silently revokes this, so it must be re-granted.
     var isProcessTrusted: Bool { AXIsProcessTrusted() }
 
+    /// Like `isProcessTrusted`, but when untrusted it shows the system "grant Accessibility"
+    /// dialog and adds the app to System Settings → Accessibility (toggled off) so the user
+    /// can flip it on. Call once at launch.
+    @discardableResult
+    func promptForTrustIfNeeded() -> Bool {
+        // Literal value of kAXTrustedCheckOptionPrompt — the C global is a non-Sendable
+        // `var` that Swift 6 strict concurrency rejects (same reason we use "AXFont" etc.).
+        AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary)
+    }
+
+    /// Whether a debugger (Xcode/LLDB) is attached. When it is, macOS treats the debugger
+    /// as the "responsible process" and DENIES cross-process Accessibility reads with
+    /// error -25204 — even though `isProcessTrusted` returns true. That's why ghost text
+    /// can't find the caret when launched via Cmd+R; the app must run standalone.
+    var isBeingDebugged: Bool {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else { return false }
+        return (info.kp_proc.p_flag & P_TRACED) != 0
+    }
+
     /// Logs the first AX read outcome so we can see, once, why the field is or isn't
     /// readable (vs. spamming the log every keystroke).
     private func probeAXOnce(_ message: String) {
@@ -88,17 +110,11 @@ final class AccessibilityManager {
         if let element = focusedTextElement(), let axRect = axCursorRect(for: element),
            axRect.origin.x.isFinite, axRect.origin.y.isFinite,
            axRect.height > 0, axRect.width < 100_000, axRect.height < 100_000 {
-            // AX/Quartz coords are global with a TOP-left origin (Y down); Cocoa wants
-            // global BOTTOM-left (Y up). The flip line is the top edge of the PRIMARY
-            // screen — the one whose origin is (0,0) — regardless of which display the
-            // cursor is on. Using `screens.first` was wrong: it isn't guaranteed to be
-            // the primary on multi-monitor setups, which threw the overlay off.
-            let primaryMaxY = NSScreen.screens.first(where: { $0.frame.origin == .zero })?.frame.maxY
-                ?? NSScreen.main?.frame.maxY
-            if let primaryMaxY {
-                let flippedY = primaryMaxY - axRect.maxY
-                return NSRect(x: axRect.origin.x, y: flippedY, width: axRect.width, height: axRect.height)
-            }
+            // AX/Quartz coords are global, TOP-left origin (Y down). Flip to Cocoa global
+            // (BOTTOM-left, Y up) around the menu-bar screen's height (screens[0]).
+            let menuBarHeight = NSScreen.screens.first?.frame.maxY ?? NSScreen.main?.frame.maxY ?? 0
+            let flippedY = menuBarHeight - axRect.maxY
+            return NSRect(x: axRect.origin.x, y: flippedY, width: axRect.width, height: axRect.height)
         }
         // AX unavailable — position overlay near the mouse cursor (already Cocoa coords).
         let mouse = NSEvent.mouseLocation
@@ -135,7 +151,7 @@ final class AccessibilityManager {
         // tree disabled until a client sets AXManualAccessibility. Do it once per
         // app; the tree populates shortly after, so the first query may still miss.
         let appElement = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(appElement, 1.0)
+        AXUIElementSetMessagingTimeout(appElement, 2.0)
         if !coaxedPIDs.contains(pid) {
             AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
             AXUIElementSetAttributeValue(appElement, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
@@ -144,7 +160,7 @@ final class AccessibilityManager {
 
         // Approach 1: system-wide focused element (works on most native apps)
         let sysWide = AXUIElementCreateSystemWide()
-        AXUIElementSetMessagingTimeout(sysWide, 1.0)
+        AXUIElementSetMessagingTimeout(sysWide, 2.0)
         var sysRef: CFTypeRef?
         let sysErr = AXUIElementCopyAttributeValue(sysWide, kAXFocusedUIElementAttribute as CFString, &sysRef)
         if sysErr == .success, let ref = sysRef {
@@ -166,7 +182,18 @@ final class AccessibilityManager {
     }
 
     private func axCursorRect(for element: AXUIElement) -> NSRect? {
-        var cfRange = CFRange(location: element.selectedRange?.location ?? 0, length: 0)
+        let caret = element.selectedRange?.location ?? 0
+        // A real glyph gives a reliable rect; an empty range at the caret can report the
+        // line's top-left instead of the glyph. Prefer the char just before the caret and
+        // use its trailing edge as the insertion point; fall back to the empty range.
+        if caret > 0, let glyph = boundsForRange(element, location: caret - 1, length: 1), glyph.height > 0 {
+            return NSRect(x: glyph.maxX, y: glyph.origin.y, width: 0, height: glyph.height)
+        }
+        return boundsForRange(element, location: caret, length: 0)
+    }
+
+    private func boundsForRange(_ element: AXUIElement, location: Int, length: Int) -> NSRect? {
+        var cfRange = CFRange(location: location, length: length)
         guard let rangeValue = AXValueCreate(.cfRange, &cfRange) else { return nil }
         var rect: CFTypeRef?
         guard AXUIElementCopyParameterizedAttributeValue(
