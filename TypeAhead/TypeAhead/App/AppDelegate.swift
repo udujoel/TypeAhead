@@ -60,9 +60,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         deps.keyMonitor.start()
 
-        // One-time check: if this is false, AX reads fail → ghost text lands at the mouse
-        // and context comes from the keystroke buffer. Re-grant in System Settings.
+        // One-time checks. If trusted is false → re-grant in System Settings. If a debugger
+        // is attached, cross-process AX reads are DENIED (error -25204) regardless of trust,
+        // so ghost text can't find the caret — the app must be launched standalone, not Cmd+R.
         print("🔐 Accessibility trusted: \(deps.accessibilityManager.isProcessTrusted)")
+        print("🔬 Debugger attached: \(deps.accessibilityManager.isBeingDebugged) (if true, AX reads will fail — launch the app from Finder, not Xcode Run)")
 
         // Load (and download if needed) the user's chosen model on startup.
         // ModelManager streams progress into its statuses dict, which the UI observes.

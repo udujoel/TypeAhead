@@ -159,6 +159,15 @@ final class KeyEventMonitor {
     /// Fires for every keyDown in any app (via CGEventTap).
     /// Returns `nil` to swallow the event, or the original event to pass it through.
     private func handleGlobal(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        // The OS disables the tap if a callback runs too long (or on certain user input).
+        // Re-enable it immediately, otherwise Tab interception silently dies and Tab
+        // starts changing focus again.
+        if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+            if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
+            print("⚠️ event tap disabled (\(type.rawValue)) — re-enabled")
+            return nil
+        }
+
         guard type == .keyDown else { return Unmanaged.passRetained(event) }
 
         // Ignore events that we ourselves injected
@@ -173,12 +182,19 @@ final class KeyEventMonitor {
 
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
 
-        // Tab — swallow and accept completion when overlay is up
+        // Tab — swallow and accept completion when overlay is up.
         if keyCode == CGKeyCode(kVK_Tab) {
             if isOverlayVisible {
                 let shifted = event.flags.contains(.maskShift)
-                if shifted { onShiftTabPressed?() } else { onTabPressed?() }
-                return nil  // ← swallowed: TextEdit never sees this Tab
+                // Defer the accept: inserting text does AX / CGEvent work that's too slow to
+                // run inside this callback. A slow callback makes the OS disable the tap and
+                // lets the Tab through (the "Tab also changes focus" bug). Returning nil now
+                // guarantees the Tab is swallowed; the word is inserted a beat later.
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if shifted { self.onShiftTabPressed?() } else { self.onTabPressed?() }
+                }
+                return nil  // ← swallowed immediately: the app never sees this Tab
             }
             return Unmanaged.passRetained(event)
         }

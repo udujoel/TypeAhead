@@ -18,6 +18,18 @@ final class AccessibilityManager {
     /// in Xcode changes the binary and silently revokes this, so it must be re-granted.
     var isProcessTrusted: Bool { AXIsProcessTrusted() }
 
+    /// Whether a debugger (Xcode/LLDB) is attached. When it is, macOS treats the debugger
+    /// as the "responsible process" and DENIES cross-process Accessibility reads with
+    /// error -25204 — even though `isProcessTrusted` returns true. That's why ghost text
+    /// can't find the caret when launched via Cmd+R; the app must run standalone.
+    var isBeingDebugged: Bool {
+        var info = kinfo_proc()
+        var size = MemoryLayout<kinfo_proc>.stride
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
+        guard sysctl(&mib, 4, &info, &size, nil, 0) == 0 else { return false }
+        return (info.kp_proc.p_flag & P_TRACED) != 0
+    }
+
     /// Logs the first AX read outcome so we can see, once, why the field is or isn't
     /// readable (vs. spamming the log every keystroke).
     private func probeAXOnce(_ message: String) {
@@ -135,7 +147,7 @@ final class AccessibilityManager {
         // tree disabled until a client sets AXManualAccessibility. Do it once per
         // app; the tree populates shortly after, so the first query may still miss.
         let appElement = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(appElement, 1.0)
+        AXUIElementSetMessagingTimeout(appElement, 2.0)
         if !coaxedPIDs.contains(pid) {
             AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
             AXUIElementSetAttributeValue(appElement, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
@@ -144,7 +156,7 @@ final class AccessibilityManager {
 
         // Approach 1: system-wide focused element (works on most native apps)
         let sysWide = AXUIElementCreateSystemWide()
-        AXUIElementSetMessagingTimeout(sysWide, 1.0)
+        AXUIElementSetMessagingTimeout(sysWide, 2.0)
         var sysRef: CFTypeRef?
         let sysErr = AXUIElementCopyAttributeValue(sysWide, kAXFocusedUIElementAttribute as CFString, &sysRef)
         if sysErr == .success, let ref = sysRef {
