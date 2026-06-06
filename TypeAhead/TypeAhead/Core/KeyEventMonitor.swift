@@ -119,9 +119,14 @@ final class KeyEventMonitor {
             options: .defaultTap,                // can swallow events by returning nil
             eventsOfInterest: mask,
             callback: { _, type, event, _ -> Unmanaged<CGEvent>? in
-                return MainActor.assumeIsolated {
-                    KeyEventMonitor.instance?.handleGlobal(type: type, event: event)
-                        ?? Unmanaged.passRetained(event)
+                MainActor.assumeIsolated {
+                    // Only fall back to passthrough when there's no monitor. handleGlobal
+                    // returns nil to *swallow* (e.g. Tab) — that nil must be returned as-is,
+                    // not coalesced to passthrough, or the swallowed key still reaches the app.
+                    guard let monitor = KeyEventMonitor.instance else {
+                        return Unmanaged.passRetained(event)
+                    }
+                    return monitor.handleGlobal(type: type, event: event)
                 }
             },
             userInfo: nil
