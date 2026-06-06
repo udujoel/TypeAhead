@@ -106,22 +106,14 @@ final class AccessibilityManager {
         return size
     }
 
-    private var didLogCursor = false
-
     func cursorScreenRect() -> NSRect? {
         if let element = focusedTextElement(), let axRect = axCursorRect(for: element),
            axRect.origin.x.isFinite, axRect.origin.y.isFinite,
            axRect.height > 0, axRect.width < 100_000, axRect.height < 100_000 {
             // AX/Quartz coords are global, TOP-left origin (Y down). Flip to Cocoa global
-            // (BOTTOM-left, Y up) around the menu-bar screen's height. The menu-bar screen
-            // is screens[0]; its maxY is the height of the global flip axis.
+            // (BOTTOM-left, Y up) around the menu-bar screen's height (screens[0]).
             let menuBarHeight = NSScreen.screens.first?.frame.maxY ?? NSScreen.main?.frame.maxY ?? 0
             let flippedY = menuBarHeight - axRect.maxY
-            if !didLogCursor {
-                didLogCursor = true
-                let screens = NSScreen.screens.map { "\($0.frame)" }.joined(separator: " | ")
-                print("📐 cursor RAW axRect=\(axRect) menuBarHeight=\(menuBarHeight) → flippedY=\(flippedY); screens=[\(screens)]")
-            }
             return NSRect(x: axRect.origin.x, y: flippedY, width: axRect.width, height: axRect.height)
         }
         // AX unavailable — position overlay near the mouse cursor (already Cocoa coords).

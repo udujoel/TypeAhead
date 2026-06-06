@@ -6,10 +6,9 @@ enum OverlayPositioner {
     /// `cursorRect` uses screen coordinates (bottom-left origin, Y increases upward).
     static func inlineOrigin(cursorRect: NSRect, panelSize: NSSize) -> NSPoint {
         let x = cursorRect.maxX
-        // Empirically calibrated from logged panel-vs-caret frames: with no shift the ghost
-        // sits ~half a glyph-height high (NSTextField draws text above its center); shifting a
-        // full glyph height dropped it a line too low. Half the glyph height lands it on the line.
-        let y = cursorRect.minY - cursorRect.height / 2
+        // Anchor the panel bottom at the caret glyph's bottom. The panel is sized to the
+        // font's natural line height, so the ghost's baseline lines up with the input's.
+        let y = cursorRect.minY
 
         // Pick the screen the cursor is on; fall back to main screen
         let screen = NSScreen.screens.first {

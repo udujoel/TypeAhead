@@ -184,7 +184,6 @@ final class KeyEventMonitor {
 
         // Tab — swallow and accept completion when overlay is up.
         if keyCode == CGKeyCode(kVK_Tab) {
-            print("⌨️ Tab received — overlayVisible=\(isOverlayVisible) → \(isOverlayVisible ? "SWALLOW+accept" : "pass through")")
             if isOverlayVisible {
                 let shifted = event.flags.contains(.maskShift)
                 // Defer the accept: inserting text does AX / CGEvent work that's too slow to

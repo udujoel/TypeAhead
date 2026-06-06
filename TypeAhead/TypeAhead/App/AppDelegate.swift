@@ -67,8 +67,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Keep the rest of the suggestion visible for the next Tab.
             let remaining = parts.count > 1 ? String(parts[1]) : ""
             if remaining.isEmpty {
+                // Accepted the last word — hide, then immediately request a fresh suggestion
+                // for the new context so the next Tab has something to accept (rather than
+                // passing through as a literal tab).
                 deps.keyMonitor.isOverlayVisible = false
                 deps.completionOverlay.hide()
+                deps.completionPipeline.keystrokeReceived()
             } else if let rect = deps.accessibilityManager.cursorScreenRect() {
                 deps.completionOverlay.update(text: remaining, near: rect)
                 deps.keyMonitor.isOverlayVisible = true

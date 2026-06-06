@@ -67,17 +67,15 @@ final class CompletionOverlay {
     // MARK: - Private
 
     private func repositionPanel(cursorRect: NSRect) {
+        // Size the panel to the label's natural line height (set by sizeToFit in show/update)
+        // and anchor its bottom at the caret glyph's bottom. Because an NSTextField's baseline
+        // sits ~one descender above its bottom — same as the text view's own glyphs — the
+        // ghost baseline then coincides with the input baseline (no magic vertical fudge).
         let panelWidth = min(label.frame.width + 6, 600)
-        let panelHeight = cursorRect.height + 2
+        let panelHeight = label.frame.height
         let panelSize = NSSize(width: panelWidth, height: panelHeight)
         let origin = OverlayPositioner.inlineOrigin(cursorRect: cursorRect, panelSize: panelSize)
         panel.setFrame(NSRect(origin: origin, size: panelSize), display: false)
         label.frame = NSRect(x: 0, y: 0, width: panelWidth, height: panelHeight)
-        if !Self.didLogFrame {
-            Self.didLogFrame = true
-            print("🖼️ panel.frame=\(panel.frame) for caret=\(cursorRect) (compare panel.y to caret.y — equal means coords ok, offset means render)")
-        }
     }
-
-    private static var didLogFrame = false
 }
