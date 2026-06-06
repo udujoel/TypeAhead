@@ -8,45 +8,47 @@ struct TextContext: Sendable {
 }
 
 enum ContextBuilder {
-    private static let fimThresholdChars = 50
-    private static let maxClipboardChars = 400
-    private static let maxSuffixChars = 100
-    private static let maxPrefixChars = 200
+    private static let maxPrefixChars = 160   // smaller = faster first token on small models
+    private static let maxSuffixChars = 120   // text after the cursor, for fill-in-middle
 
+    /// Builds a compact prompt: the text immediately before the cursor, trimmed
+    /// to the current sentence/line. The keystroke buffer accumulates everything
+    /// typed since launch, so without trimming the prompt balloons with unrelated
+    /// earlier text and first-token latency suffers badly.
+    ///
+    /// `clipboard`/`history` are accepted for API compatibility but intentionally
+    /// excluded — small models complete more accurately from a focused prompt.
     static func buildPrompt(
         context: TextContext,
         clipboard: String?,
         history: [String],
         customInstructions: String
     ) -> String {
-        var parts: [String] = []
+        var prefix = String(context.textBeforeCursor.suffix(maxPrefixChars))
 
-        if !customInstructions.isEmpty {
-            parts.append(customInstructions)
+        // Trim to the start of the current sentence/line when a boundary exists,
+        // so the model focuses on what the user is actively writing.
+        if let boundary = prefix.range(
+            of: #"[\.!\?\n][\s"')\]]*"#,
+            options: [.regularExpression, .backwards]
+        ) {
+            let tail = String(prefix[boundary.upperBound...])
+            if !tail.trimmingCharacters(in: .whitespaces).isEmpty {
+                prefix = tail
+            }
         }
 
-        if !history.isEmpty {
-            parts.append("Examples of your writing style:")
-            parts.append(contentsOf: history.prefix(5))
-        }
+        return prefix
+    }
 
-        let appContext = "App: \(context.appName)\(context.windowTitle.isEmpty ? "" : " — \(context.windowTitle)")"
-        parts.append(appContext)
-
-        if let clip = clipboard, !clip.isEmpty {
-            let trimmed = String(clip.prefix(maxClipboardChars))
-            parts.append("Clipboard context: \(trimmed)")
-        }
-
-        let prefix = String(context.textBeforeCursor.suffix(maxPrefixChars))
+    /// The text immediately after the cursor, trimmed to the end of the current
+    /// sentence/line. Empty when the cursor is at the end of the text (the common
+    /// case) — callers treat empty as "use plain continuation, not fill-in-middle".
+    static func buildSuffix(context: TextContext) -> String {
         let suffix = String(context.textAfterCursor.prefix(maxSuffixChars))
-
-        if context.textBeforeCursor.count >= fimThresholdChars {
-            let header = parts.joined(separator: "\n")
-            return "<|fim_prefix|>\(header)\n\(prefix)<|fim_suffix|>\(suffix)<|fim_middle|>"
-        } else {
-            parts.append(prefix)
-            return parts.joined(separator: "\n")
+        if let boundary = suffix.range(of: #"[\.!\?\n]"#, options: .regularExpression) {
+            return String(suffix[..<boundary.upperBound])
         }
+        return suffix
     }
 }

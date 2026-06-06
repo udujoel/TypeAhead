@@ -14,27 +14,41 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     }
     var icon: String {
         switch self {
-        case .setup:            "checkmark.shield"
+        case .setup:            "checkmark.shield.fill"
         case .general:          "slider.horizontal.3"
-        case .personalization:  "person.crop.circle"
-        case .statistics:       "chart.bar"
-        case .about:            "info.circle"
+        case .personalization:  "person.crop.circle.fill"
+        case .statistics:       "chart.bar.fill"
+        case .about:            "info.circle.fill"
+        }
+    }
+    var iconColor: Color {
+        switch self {
+        case .setup:            .green
+        case .general:          .blue
+        case .personalization:  .purple
+        case .statistics:       .orange
+        case .about:            .gray
         }
     }
 }
 
 struct SettingsWindow: View {
     @Environment(AppSettings.self) private var settings
-    @State private var selectedSection: SettingsSection = .general
+    @State private var selectedSection: SettingsSection = .setup
 
     var body: some View {
         NavigationSplitView {
             List(SettingsSection.allCases, selection: $selectedSection) { section in
-                Label(section.label, systemImage: section.icon)
-                    .tag(section)
+                HStack(spacing: 10) {
+                    Image(systemName: section.icon)
+                        .foregroundStyle(section.iconColor)
+                        .frame(width: 20)
+                    Text(section.label)
+                }
+                .tag(section)
             }
             .listStyle(.sidebar)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
+            .navigationSplitViewColumnWidth(min: 180, ideal: 190)
         } detail: {
             Group {
                 switch selectedSection {
@@ -45,8 +59,8 @@ struct SettingsWindow: View {
                 case .about:            AboutView()
                 }
             }
-            .frame(minWidth: 480, minHeight: 400)
+            .frame(minWidth: 500, minHeight: 420)
         }
-        .frame(minWidth: 680, minHeight: 460)
+        .frame(minWidth: 700, minHeight: 480)
     }
 }

@@ -19,6 +19,8 @@ let package = Package(
                 "TypeAhead.entitlements",
                 // Requires MLXLLM — not an SPM library product; built in Xcode only
                 "Core/InferenceEngine.swift",
+                // Requires swift-transformers (Hub/Tokenizers) — built in Xcode only
+                "Core/HFBridge.swift",
                 // Depends on InferenceEngine
                 "Models/ModelManager.swift",
                 // Requires Sparkle — built in Xcode only
