@@ -1,6 +1,6 @@
 import AppKit
 import Carbon
-import CoreGraphics
+@preconcurrency import CoreGraphics
 
 // MARK: - Keystroke Buffer
 

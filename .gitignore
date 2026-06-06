@@ -8,3 +8,8 @@ DerivedData/
 .netrc
 *.xcodeproj
 build/
+
+# Session/research artifacts
+.claude/
+.playwright-mcp/
+/*.png

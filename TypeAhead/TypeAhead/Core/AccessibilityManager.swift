@@ -10,6 +10,22 @@ extension AccessibilityManager {
 @MainActor
 final class AccessibilityManager {
 
+    /// Apps we've already asked to enable their accessibility tree (Chromium/Electron).
+    private var coaxedPIDs = Set<pid_t>()
+
+    /// Whether this process currently holds Accessibility permission. If false, all AX
+    /// reads fail and we fall back to the keystroke buffer + mouse position. Rebuilding
+    /// in Xcode changes the binary and silently revokes this, so it must be re-granted.
+    var isProcessTrusted: Bool { AXIsProcessTrusted() }
+
+    /// Logs the first AX read outcome so we can see, once, why the field is or isn't
+    /// readable (vs. spamming the log every keystroke).
+    private func probeAXOnce(_ message: String) {
+        guard !didProbeAX else { return }
+        didProbeAX = true
+        print("🔍 AX probe: \(message)")
+    }
+
     // MARK: - Pure Logic (testable without AX permission)
 
     nonisolated static func split(text: String, at position: Int) -> (before: String, after: String) {
@@ -20,9 +36,21 @@ final class AccessibilityManager {
 
     // MARK: - AX Live API
 
+    private var didProbeAX = false
+    private var lastFocusDiag = ""
+
     func readTextContext() -> TextContext? {
-        guard let element = focusedTextElement() else { return nil }
-        guard let value = element.stringValue else { return nil }
+        guard let element = focusedTextElement() else {
+            probeAXOnce("focusedTextElement = nil [\(lastFocusDiag)] — AXError -25204=cannotComplete (often debugger/launch), -25211=apiDisabled (permission), -25212=noValue (nothing focused)")
+            return nil
+        }
+        guard let value = element.stringValue else {
+            var role: CFTypeRef?
+            AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+            probeAXOnce("got focused element role=\(role as? String ?? "unknown") but kAXValue (stringValue) is nil")
+            return nil
+        }
+        probeAXOnce("OK — read \(value.count) chars from the focused field")
         let cursorRange = element.selectedRange ?? NSRange(location: value.count, length: 0)
         let (before, after) = Self.split(text: value, at: cursorRange.location)
         let appName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
@@ -57,10 +85,22 @@ final class AccessibilityManager {
     }
 
     func cursorScreenRect() -> NSRect? {
-        if let element = focusedTextElement(), let rect = axCursorRect(for: element) {
-            return rect
+        if let element = focusedTextElement(), let axRect = axCursorRect(for: element),
+           axRect.origin.x.isFinite, axRect.origin.y.isFinite,
+           axRect.height > 0, axRect.width < 100_000, axRect.height < 100_000 {
+            // AX/Quartz coords are global with a TOP-left origin (Y down); Cocoa wants
+            // global BOTTOM-left (Y up). The flip line is the top edge of the PRIMARY
+            // screen — the one whose origin is (0,0) — regardless of which display the
+            // cursor is on. Using `screens.first` was wrong: it isn't guaranteed to be
+            // the primary on multi-monitor setups, which threw the overlay off.
+            let primaryMaxY = NSScreen.screens.first(where: { $0.frame.origin == .zero })?.frame.maxY
+                ?? NSScreen.main?.frame.maxY
+            if let primaryMaxY {
+                let flippedY = primaryMaxY - axRect.maxY
+                return NSRect(x: axRect.origin.x, y: flippedY, width: axRect.width, height: axRect.height)
+            }
         }
-        // AX unavailable — position overlay near the mouse cursor
+        // AX unavailable — position overlay near the mouse cursor (already Cocoa coords).
         let mouse = NSEvent.mouseLocation
         return NSRect(x: mouse.x, y: mouse.y - 24, width: 0, height: 20)
     }
@@ -88,36 +128,41 @@ final class AccessibilityManager {
     // MARK: - Helpers
 
     private func focusedTextElement() -> AXUIElement? {
-        guard let frontApp = NSWorkspace.shared.frontmostApplication else {
-            print("🔍 no frontmost application")
-            return nil
-        }
+        guard let frontApp = NSWorkspace.shared.frontmostApplication else { return nil }
         let pid = frontApp.processIdentifier
-        print("🔍 querying AX for \(frontApp.localizedName ?? "?") pid=\(pid)")
 
-        // Approach 1: system-wide element (works better on some macOS versions)
+        // Chromium/Electron apps (Claude, VS Code, Slack, Chrome) keep their AX
+        // tree disabled until a client sets AXManualAccessibility. Do it once per
+        // app; the tree populates shortly after, so the first query may still miss.
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, 1.0)
+        if !coaxedPIDs.contains(pid) {
+            AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+            AXUIElementSetAttributeValue(appElement, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+            coaxedPIDs.insert(pid)
+        }
+
+        // Approach 1: system-wide focused element (works on most native apps)
         let sysWide = AXUIElementCreateSystemWide()
-        AXUIElementSetMessagingTimeout(sysWide, 3.0)
+        AXUIElementSetMessagingTimeout(sysWide, 1.0)
         var sysRef: CFTypeRef?
         let sysErr = AXUIElementCopyAttributeValue(sysWide, kAXFocusedUIElementAttribute as CFString, &sysRef)
-        print("🔍 system-wide err=\(sysErr.rawValue) got=\(sysRef != nil)")
         if sysErr == .success, let ref = sysRef {
             let el = ref as! AXUIElement
-            guard !isPasswordField(el) else { return nil }
-            return el
+            return isPasswordField(el) ? nil : el
         }
 
-        // Approach 2: per-app element
-        let appElement = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(appElement, 3.0)
+        // Approach 2: per-app focused element
         var appRef: CFTypeRef?
         let appErr = AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &appRef)
-        print("🔍 per-app err=\(appErr.rawValue) got=\(appRef != nil)")
-        guard appErr == .success, let ref = appRef else { return nil }
+        if appErr == .success, let ref = appRef {
+            let el = ref as! AXUIElement
+            return isPasswordField(el) ? nil : el
+        }
 
-        let el = ref as! AXUIElement
-        guard !isPasswordField(el) else { return nil }
-        return el
+        // Both failed — record why (AXError raw value) for the one-shot probe.
+        lastFocusDiag = "app=\(frontApp.localizedName ?? "?") sysWideErr=\(sysErr.rawValue) appErr=\(appErr.rawValue)"
+        return nil
     }
 
     private func axCursorRect(for element: AXUIElement) -> NSRect? {

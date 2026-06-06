@@ -47,19 +47,21 @@ final class ModelManager {
     // MARK: - Actions
 
     /// Downloads (if needed) and loads a model as the active inference engine.
-    /// Streams progress from 0.0 → 1.0 through `.downloading`, then transitions to `.active`.
+    /// If the model is already cached on disk, goes straight to `.loading` (no download bar).
+    /// Otherwise streams `.downloading` progress from 0.0 → 1.0, then `.loading`, then `.active`.
     func downloadAndActivate(config: ModelConfig) async {
         guard statuses[config.id] != .active else { return }
-        statuses[config.id] = .downloading(0)
+
+        let isCached = ModelManager.isModelCached(repoId: config.huggingFaceRepo)
+        statuses[config.id] = isCached ? .loading : .downloading(0)
 
         do {
             try await inferenceEngine.loadModel(config: config) { [weak self] progress in
                 Task { @MainActor [weak self] in
-                    // Keep showing .downloading until fully loaded
-                    if progress < 1.0 {
-                        self?.statuses[config.id] = .downloading(progress)
-                    } else {
-                        self?.statuses[config.id] = .loading
+                    guard let self else { return }
+                    // Only update progress bar during actual network download
+                    if !isCached {
+                        self.statuses[config.id] = progress < 1.0 ? .downloading(progress) : .loading
                     }
                 }
             }
@@ -70,6 +72,7 @@ final class ModelManager {
             statuses[config.id] = .active
             settings.activeModelID = config.id
         } catch {
+            print("❌ ModelManager.downloadAndActivate failed for \(config.id): \(error)")
             statuses[config.id] = .notDownloaded
         }
     }
@@ -83,13 +86,17 @@ final class ModelManager {
         }
     }
 
-    /// Checks whether a model's files exist in the HuggingFace local hub cache.
-    /// No imports needed — the cache path follows a predictable naming convention.
+    /// Checks whether a model's files exist in the Swift Hub cache (~/Library/Caches/models/{repoId}/).
+    /// This is where MLXLLM's defaultHubApi downloads and reads models from.
     static func isModelCached(repoId: String) -> Bool {
-        // "mlx-community/gemma-4-e2b-it-4bit" → "models--mlx-community--gemma-4-e2b-it-4bit"
-        let dirName = "models--" + repoId.replacingOccurrences(of: "/", with: "--")
-        let cacheURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".cache/huggingface/hub/\(dirName)")
-        return FileManager.default.fileExists(atPath: cacheURL.path)
+        guard let cachesURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+            return false
+        }
+        let modelURL = cachesURL.appendingPathComponent("models/\(repoId)")
+        guard let contents = try? FileManager.default.contentsOfDirectory(atPath: modelURL.path) else {
+            return false
+        }
+        // At minimum the model needs a config.json and at least one weight file
+        return contents.contains("config.json") && contents.contains(where: { $0.hasSuffix(".safetensors") })
     }
 }

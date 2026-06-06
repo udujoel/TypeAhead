@@ -16,72 +16,91 @@ struct SetupView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 0) {
 
-                // ── Header ──────────────────────────────────────
-                HStack(spacing: 14) {
-                    Image(systemName: allReady ? "checkmark.circle.fill" : "gearshape.circle.fill")
-                        .font(.system(size: 36))
-                        .foregroundStyle(allReady ? .green : .orange)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(allReady ? "All Set!" : "Setup Required")
+                // ── Hero header ─────────────────────────────────
+                HStack(spacing: 16) {
+                    ZStack {
+                        Circle()
+                            .fill(allReady ? Color.green.opacity(0.15) : Color.orange.opacity(0.12))
+                            .frame(width: 56, height: 56)
+                        Image(systemName: allReady ? "checkmark.circle.fill" : "sparkles")
+                            .font(.system(size: 28))
+                            .foregroundStyle(allReady ? .green : .orange)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(allReady ? "You're all set!" : "Let's get started")
                             .font(.title2).bold()
                         Text(allReady
-                             ? "TypeAhead is ready. Start typing in any app."
-                             : "Complete the steps below to enable completions.")
+                             ? "TypeAhead is active. Start typing in any app."
+                             : "A few quick steps to enable AI completions.")
                             .foregroundStyle(.secondary)
-                            .font(.subheadline)
                     }
+                    Spacer()
                 }
-                .padding(.bottom, 4)
+                .padding(24)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                .padding(.bottom, 20)
 
-                // ── Accessibility ───────────────────────────────
-                RequirementRow(
-                    title: "Accessibility Permission",
-                    description: "Required to read and insert text in other apps.",
-                    badge: accessibilityGranted ? .granted : .required
-                ) {
-                    if !accessibilityGranted {
-                        Button("Grant Access") { openAccessibilitySettings() }
-                            .buttonStyle(.borderedProminent).controlSize(.small)
+                // ── Steps ────────────────────────────────────────
+                VStack(spacing: 12) {
+
+                    SetupStepRow(
+                        step: 1,
+                        title: "Accessibility Access",
+                        description: "Lets TypeAhead read and insert text in other apps.",
+                        isComplete: accessibilityGranted,
+                        isRequired: true
+                    ) {
+                        if !accessibilityGranted {
+                            Button("Open Settings") { openAccessibilitySettings() }
+                                .buttonStyle(.borderedProminent).controlSize(.small)
+                        }
                     }
-                }
 
-                // ── Input Monitoring ────────────────────────────
-                RequirementRow(
-                    title: "Input Monitoring Permission",
-                    description: "Required to detect keystrokes in other apps.",
-                    badge: inputMonitoringGranted ? .granted : .required
-                ) {
-                    if !inputMonitoringGranted {
-                        Button("Grant Access") { openInputMonitoringSettings() }
-                            .buttonStyle(.borderedProminent).controlSize(.small)
+                    SetupStepRow(
+                        step: 2,
+                        title: "Input Monitoring",
+                        description: "Lets TypeAhead detect when you're typing.",
+                        isComplete: inputMonitoringGranted,
+                        isRequired: true
+                    ) {
+                        if !inputMonitoringGranted {
+                            Button("Open Settings") { openInputMonitoringSettings() }
+                                .buttonStyle(.borderedProminent).controlSize(.small)
+                        }
                     }
-                }
 
-                // ── Screen Recording ────────────────────────────
-                RequirementRow(
-                    title: "Screen Recording",
-                    description: "Optional — for richer context-aware suggestions. Processed on-device, never stored.",
-                    badge: screenRecordingGranted ? .granted : .optional
-                ) {
-                    if !screenRecordingGranted {
-                        Button("Grant Access") { openScreenRecordingSettings() }
-                            .buttonStyle(.bordered).controlSize(.small)
+                    SetupStepRow(
+                        step: 3,
+                        title: "Screen Recording",
+                        description: "Optional — gives richer context for better suggestions. Processed on-device, never uploaded.",
+                        isComplete: screenRecordingGranted,
+                        isRequired: false
+                    ) {
+                        if !screenRecordingGranted {
+                            Button("Open Settings") { openScreenRecordingSettings() }
+                                .buttonStyle(.bordered).controlSize(.small)
+                        }
                     }
+
+                    ModelDownloadRow(modelManager: modelManager, settings: settings)
                 }
 
-                // ── On-Device Model ─────────────────────────────
-                ModelDownloadRow(modelManager: modelManager, settings: settings)
-
-                // ── Clipboard Context ───────────────────────────
-                RequirementRow(
-                    title: "Clipboard Context",
-                    description: "Lets TypeAhead read your clipboard for more relevant suggestions.",
-                    badge: settings.useClipboardContext ? .enabled : .disabled
-                ) { EmptyView() }
+                // ── Tip ──────────────────────────────────────────
+                if allReady {
+                    HStack(spacing: 10) {
+                        Image(systemName: "lightbulb.fill")
+                            .foregroundStyle(.yellow)
+                        Text("Start typing anywhere — suggestions appear automatically. Press **Tab** to accept.")
+                            .font(.callout)
+                    }
+                    .padding(14)
+                    .background(.yellow.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(.top, 20)
+                }
             }
-            .padding(28)
+            .padding(24)
         }
         .onAppear { checkPermissions() }
         .onReceive(Timer.publish(every: 2, on: .main, in: .common).autoconnect()) { _ in
@@ -109,7 +128,61 @@ struct SetupView: View {
     }
 }
 
-// MARK: - Model download row (live progress)
+// MARK: - Step row
+
+private struct SetupStepRow<Trailing: View>: View {
+    let step: Int
+    let title: String
+    let description: String
+    let isComplete: Bool
+    let isRequired: Bool
+    @ViewBuilder let trailing: () -> Trailing
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 14) {
+            // Step circle
+            ZStack {
+                Circle()
+                    .fill(isComplete ? Color.green : Color.secondary.opacity(0.15))
+                    .frame(width: 30, height: 30)
+                if isComplete {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
+                } else {
+                    Text("\(step)")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(title).fontWeight(.medium)
+                    if !isRequired {
+                        Text("Optional")
+                            .font(.caption2)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(.secondary.opacity(0.12), in: Capsule())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer()
+            trailing()
+        }
+        .padding(14)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+// MARK: - Model download row
 
 private struct ModelDownloadRow: View {
     let modelManager: ModelManager
@@ -122,111 +195,81 @@ private struct ModelDownloadRow: View {
     var body: some View {
         let status = modelManager.status(for: activeConfig)
 
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 0) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("On-Device Model")
-                        .fontWeight(.medium)
+        HStack(alignment: .top, spacing: 14) {
+            // Step circle
+            ZStack {
+                Circle()
+                    .fill(status == .active ? Color.green : Color.secondary.opacity(0.15))
+                    .frame(width: 30, height: 30)
+                if status == .active {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
+                } else {
+                    Text("4")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Text("AI Model").fontWeight(.medium)
                     Text(activeConfig.displayName)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(.blue.opacity(0.12), in: Capsule())
+                        .foregroundStyle(.blue)
                 }
-                Spacer(minLength: 16)
-                modelStatusBadge(status)
+                Text("Runs entirely on your device — no internet needed for completions.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                // Progress bar during download
+                if case .downloading(let progress) = status {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ProgressView(value: progress)
+                            .progressViewStyle(.linear)
+                            .tint(.blue)
+                        Text(String(format: "Downloading… %.0f%%  (%.1f / %.1f GB)",
+                                    progress * 100,
+                                    activeConfig.fileSizeGB * progress,
+                                    activeConfig.fileSizeGB))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if case .loading = status {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Loading model into memory…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
-            // Progress bar — only visible while downloading
-            if case .downloading(let progress) = status {
-                VStack(alignment: .leading, spacing: 4) {
-                    ProgressView(value: progress)
-                        .progressViewStyle(.linear)
-                        .tint(.blue)
-                    Text(String(format: "%d%% — %.1f GB of %.1f GB",
-                                Int(progress * 100),
-                                activeConfig.fileSizeGB * progress,
-                                activeConfig.fileSizeGB))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.top, 10)
-            }
+            Spacer()
 
-            // Download button — only when not yet started
             if status == .notDownloaded {
-                Button("Download \(activeConfig.displayName)") {
-                    Task { await modelManager.downloadAndActivate(config: activeConfig) }
+                if ModelManager.isModelCached(repoId: activeConfig.huggingFaceRepo) {
+                    Button("Activate") {
+                        Task { await modelManager.downloadAndActivate(config: activeConfig) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                } else {
+                    Button("Download") {
+                        Task { await modelManager.downloadAndActivate(config: activeConfig) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .padding(.top, 10)
             }
         }
-        .padding()
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    @ViewBuilder
-    private func modelStatusBadge(_ status: ModelStatus) -> some View {
-        switch status {
-        case .notDownloaded:
-            Text("Not Downloaded")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        case .downloading(let p):
-            Text("\(Int(p * 100))%")
-                .font(.callout.monospacedDigit())
-                .foregroundStyle(.blue)
-        case .loading:
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("Loading…").font(.callout).foregroundStyle(.secondary)
-            }
-        case .active:
-            Label("Active", systemImage: "checkmark.circle.fill")
-                .font(.callout)
-                .foregroundStyle(.green)
-        }
-    }
-}
-
-// MARK: - Shared requirement row
-
-private enum BadgeStyle {
-    case granted, required, optional, enabled, disabled
-    var label: String {
-        switch self {
-        case .granted: "Granted"; case .required: "Required"
-        case .optional: "Optional"; case .enabled: "Enabled"; case .disabled: "Disabled"
-        }
-    }
-    var color: Color {
-        switch self {
-        case .granted, .enabled: .green
-        case .required: .orange
-        case .optional, .disabled: .secondary
-        }
-    }
-}
-
-private struct RequirementRow<Trailing: View>: View {
-    let title: String
-    let description: String
-    let badge: BadgeStyle
-    @ViewBuilder let trailing: () -> Trailing
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title).fontWeight(.medium)
-                Text(description).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 16)
-            VStack(alignment: .trailing, spacing: 6) {
-                Text(badge.label).font(.callout).foregroundStyle(badge.color)
-                trailing()
-            }
-        }
-        .padding()
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
+        .padding(14)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
     }
 }

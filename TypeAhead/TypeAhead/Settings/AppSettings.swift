@@ -3,8 +3,16 @@ import Observation
 
 enum CompletionLength: String, CaseIterable, Sendable {
     case short, medium, long
+    /// How many tokens the model may generate (caps compute/latency). Kept comfortably
+    /// above maxWords so the model isn't cut off before it produces real words (it often
+    /// emits a newline or two first); the displayed result is then capped by maxWords.
     var maxTokens: Int {
-        switch self { case .short: 20; case .medium: 40; case .long: 80 }
+        switch self { case .short: 16; case .medium: 32; case .long: 64 }
+    }
+    /// How many words of the result are actually shown (enforces the label below).
+    /// 0 would mean "no cap"; we always cap here.
+    var maxWords: Int {
+        switch self { case .short: 1; case .medium: 4; case .long: 20 }
     }
     var displayName: String {
         switch self {
@@ -57,7 +65,7 @@ final class AppSettings {
     init() {
         let d = UserDefaults.standard
         completionsEnabled    = d.object(forKey: Keys.completionsEnabled)    as? Bool   ?? true
-        completionDelay       = d.object(forKey: Keys.completionDelay)       as? Double ?? 0.12
+        completionDelay       = d.object(forKey: Keys.completionDelay)       as? Double ?? 0.35
         completionLength      = CompletionLength(rawValue: d.string(forKey: Keys.completionLength) ?? "") ?? .medium
         activeModelID         = d.string(forKey: Keys.activeModelID) ?? ModelConfig.defaultModel.id
         showInAllApps         = d.object(forKey: Keys.showInAllApps)         as? Bool   ?? true
@@ -68,6 +76,14 @@ final class AppSettings {
         useClipboardContext   = d.object(forKey: Keys.useClipboardContext)   as? Bool   ?? true
         launchAtLogin         = d.object(forKey: Keys.launchAtLogin)         as? Bool   ?? true
         emojiSuggestionsEnabled = d.object(forKey: Keys.emojiSuggestionsEnabled) as? Bool ?? true
+
+        // One-time migration off the old 0.12s default, which fired inference on
+        // every keystroke. 0.35s means suggestions appear only when typing pauses.
+        // (Runs after all stored properties are initialized.)
+        if !d.bool(forKey: "didMigrateDelay_v2") {
+            if completionDelay < 0.25 { completionDelay = 0.35 }
+            d.set(true, forKey: "didMigrateDelay_v2")
+        }
     }
 
     private enum Keys {

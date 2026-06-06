@@ -5,16 +5,22 @@ import Testing
     @Test func defaultsAreCorrect() {
         let settings = AppSettings()
         #expect(settings.completionsEnabled == true)
-        #expect(settings.completionDelay == 0.12)
+        #expect(settings.completionDelay == 0.35)
         #expect(settings.completionLength == .medium)
         #expect(settings.activeModelID == ModelConfig.defaultModel.id)
         #expect(settings.showInAllApps == true)
     }
 
     @Test func completionLengthTokenBudget() {
-        #expect(CompletionLength.short.maxTokens == 20)
-        #expect(CompletionLength.medium.maxTokens == 40)
-        #expect(CompletionLength.long.maxTokens == 80)
+        #expect(CompletionLength.short.maxTokens == 16)
+        #expect(CompletionLength.medium.maxTokens == 32)
+        #expect(CompletionLength.long.maxTokens == 64)
+    }
+
+    @Test func completionLengthWordCap() {
+        #expect(CompletionLength.short.maxWords == 1)
+        #expect(CompletionLength.medium.maxWords == 4)   // "Medium (2–4 words)"
+        #expect(CompletionLength.long.maxWords == 20)
     }
 
     @Test func exceptionListRoundTrips() {

@@ -53,6 +53,7 @@ struct ModelConfig: Identifiable, Equatable, Sendable {
         recommendedForRAMGB: 8...8
     )
 
+    // mlx-swift-lm 3.31.3 supports gemma4 via Gemma4.swift
     static let all: [ModelConfig] = [gemma4E2B, gemma4E4B, gemma3_4B, qwen3_1_7B, qwen3_1B]
     static let defaultModel = gemma4E2B
 

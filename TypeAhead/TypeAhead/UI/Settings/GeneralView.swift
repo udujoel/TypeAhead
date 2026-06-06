@@ -4,6 +4,11 @@ struct GeneralView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(ModelManager.self) private var modelManager
 
+    private var recommendedModel: ModelConfig {
+        let ramGB = Int(ProcessInfo.processInfo.physicalMemory / (1024 * 1024 * 1024))
+        return ModelConfig.recommended(availableRAMGB: ramGB)
+    }
+
     var body: some View {
         @Bindable var s = settings
         Form {
@@ -14,28 +19,56 @@ struct GeneralView: View {
                         Text(length.displayName).tag(length)
                     }
                 }
-                VStack(alignment: .leading) {
-                    Text("Trigger Delay: \(Int(s.completionDelay * 1000))ms")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Slider(value: $s.completionDelay, in: 0.05...0.5, step: 0.01)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Trigger Delay")
+                        Spacer()
+                        Text("\(Int(s.completionDelay * 1000)) ms")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                    Slider(value: $s.completionDelay, in: 0.10...0.60, step: 0.05)
+                    Text("Lower = faster suggestions, higher = fewer interruptions while typing")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                 }
-                Toggle("Show in All Apps", isOn: $s.showInAllApps)
             }
 
-            Section("Model") {
+            Section {
                 ForEach(ModelConfig.all) { config in
-                    ModelRow(config: config, modelManager: modelManager)
+                    ModelRow(
+                        config: config,
+                        modelManager: modelManager,
+                        isRecommended: config.id == recommendedModel.id
+                    )
+                }
+            } header: {
+                HStack {
+                    Text("AI Model")
+                    Spacer()
+                    Button {
+                        NSWorkspace.shared.open(
+                            FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                                .appendingPathComponent("models")
+                        )
+                    } label: {
+                        Label("Model Files", systemImage: "folder")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
                 }
             }
 
             Section("Context") {
-                Toggle("Use Screenshot Context", isOn: $s.useScreenshotContext)
                 Toggle("Use Clipboard Context", isOn: $s.useClipboardContext)
+                Toggle("Use Screenshot Context", isOn: $s.useScreenshotContext)
             }
 
             Section("App") {
                 Toggle("Launch at Login", isOn: $s.launchAtLogin)
-                Toggle("Emoji Suggestions", isOn: $s.emojiSuggestionsEnabled)
+                Toggle("Enable Emoji Suggestions", isOn: $s.emojiSuggestionsEnabled)
+                Toggle("Show in All Apps", isOn: $s.showInAllApps)
             }
         }
         .formStyle(.grouped)
@@ -48,29 +81,40 @@ struct GeneralView: View {
 private struct ModelRow: View {
     let config: ModelConfig
     let modelManager: ModelManager
+    let isRecommended: Bool
 
     @State private var isActioning = false
 
     var body: some View {
         let status = modelManager.status(for: config)
 
-        HStack(spacing: 12) {
-            // Model name + size
-            VStack(alignment: .leading, spacing: 2) {
-                Text(config.displayName)
-                    .fontWeight(status == .active ? .semibold : .regular)
-                Text("\(String(format: "%.1f", config.fileSizeGB)) GB")
-                    .font(.caption).foregroundStyle(.secondary)
+        HStack(spacing: 10) {
+            // Left: name + size + recommended badge
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(config.displayName)
+                        .fontWeight(status == .active ? .semibold : .regular)
+                    if isRecommended {
+                        Text("Recommended")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(.blue.opacity(0.15), in: Capsule())
+                            .foregroundStyle(.blue)
+                    }
+                }
+                Text(String(format: "%.1f GB  ·  %d GB RAM minimum", config.fileSizeGB, config.minRAMGB))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            // Status indicator
+            // Right: status + action
             statusView(status)
-
-            // Action button
             actionButton(status)
-                .disabled(isActioning || status == .loading)
+                .disabled(isActioning || status == .loading || status == .downloading(0))
         }
         .padding(.vertical, 2)
     }
@@ -84,7 +128,7 @@ private struct ModelRow: View {
             HStack(spacing: 6) {
                 ProgressView(value: p)
                     .progressViewStyle(.linear)
-                    .frame(width: 80)
+                    .frame(width: 72)
                 Text("\(Int(p * 100))%")
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -92,11 +136,14 @@ private struct ModelRow: View {
         case .loading:
             HStack(spacing: 4) {
                 ProgressView().controlSize(.small)
-                Text("Loading").font(.caption).foregroundStyle(.secondary)
+                Text("Loading")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         case .active:
             Label("Active", systemImage: "checkmark.circle.fill")
-                .font(.caption).foregroundStyle(.green)
+                .font(.caption)
+                .foregroundStyle(.green)
         }
     }
 
@@ -104,23 +151,27 @@ private struct ModelRow: View {
     private func actionButton(_ status: ModelStatus) -> some View {
         switch status {
         case .notDownloaded:
-            // "Activate" (fast load from disk) vs "Download" (needs network)
             if ModelManager.isModelCached(repoId: config.huggingFaceRepo) {
                 Button("Activate") {
                     isActioning = true
-                    Task { await modelManager.downloadAndActivate(config: config); isActioning = false }
+                    Task {
+                        await modelManager.downloadAndActivate(config: config)
+                        isActioning = false
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
             } else {
                 Button("Download") {
                     isActioning = true
-                    Task { await modelManager.downloadAndActivate(config: config); isActioning = false }
+                    Task {
+                        await modelManager.downloadAndActivate(config: config)
+                        isActioning = false
+                    }
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
-
         case .active, .downloading, .loading:
             EmptyView()
         }

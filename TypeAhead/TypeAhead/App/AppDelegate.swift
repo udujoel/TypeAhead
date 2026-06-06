@@ -60,6 +60,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         deps.keyMonitor.start()
 
+        // One-time check: if this is false, AX reads fail → ghost text lands at the mouse
+        // and context comes from the keystroke buffer. Re-grant in System Settings.
+        print("🔐 Accessibility trusted: \(deps.accessibilityManager.isProcessTrusted)")
+
         // Load (and download if needed) the user's chosen model on startup.
         // ModelManager streams progress into its statuses dict, which the UI observes.
         Task { @MainActor in

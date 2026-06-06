@@ -19,60 +19,58 @@ final class AppDependencies {
     }
     let keyMonitor = KeyEventMonitor()
 
-    // Accumulates streamed tokens on the main actor
-    private var currentCompletion = ""
-
     private func runCompletion() async {
-        print("🔵 runCompletion called — isLoaded=\(inferenceEngine.isLoaded)")
+        guard inferenceEngine.isLoaded else { return }
 
-        // Try AX first; fall back to keystroke buffer if AX isn't trusted yet.
+        // Read the text around the cursor. Prefer the Accessibility API (full
+        // field contents); fall back to the keystroke buffer for apps where AX
+        // is unavailable (e.g. some Electron apps).
         let context: TextContext
+        let source: String
         if let axContext = accessibilityManager.readTextContext() {
-            print("🟢 context via AX: app=\(axContext.appName), before='\(axContext.textBeforeCursor.suffix(40))'")
             context = axContext
+            source = "AX"
         } else {
             let bufferText = keyMonitor.keystrokeBuffer.text
-            guard bufferText.count >= 8 else {
-                print("🔴 context too short — re-grant Accessibility in System Settings")
-                return
-            }
+            guard bufferText.count >= 3 else { return }
             let appName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
             context = TextContext(textBeforeCursor: bufferText, textAfterCursor: "", appName: appName, windowTitle: "")
-            print("🟡 context via keystroke buffer: '\(bufferText.suffix(40))'")
+            source = "buffer"
         }
 
-        let history = await historyStore.recentAcceptedPhrases(limit: 5)
-        let clipboard = settings.useClipboardContext ? ClipboardContextProvider.current() : nil
         let prompt = ContextBuilder.buildPrompt(
             context: context,
-            clipboard: clipboard,
-            history: history,
+            clipboard: nil,
+            history: [],
             customInstructions: settings.customInstructions
         )
-        currentCompletion = ""
+        guard prompt.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else { return }
+
+        // Fill-in-middle context: only the AX path knows what's after the cursor.
+        // The keystroke-buffer fallback has no suffix, so this stays empty there.
+        let suffix = ContextBuilder.buildSuffix(context: context)
 
         guard let cursorRect = accessibilityManager.cursorScreenRect() else { return }
         let fontSize = accessibilityManager.focusedFontSize()
-        print("🟡 inferenceEngine.complete — prompt length=\(prompt.count), cursor=\(cursorRect)")
+        print("⌨️ [\(source)] prompt='\(prompt.suffix(60))' suffix='\(suffix.prefix(40))' cursor=\(cursorRect)")
 
         inferenceEngine.complete(
             prompt: prompt,
-            maxTokens: settings.completionLength.maxTokens
-        ) { [weak self] token in
+            suffix: suffix,
+            maxTokens: settings.completionLength.maxTokens,
+            maxWords: settings.completionLength.maxWords
+        ) { [weak self] full in
+            // Called on the model executor — hop to main to touch UI.
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                let isFirstToken = currentCompletion.isEmpty
-                currentCompletion += token
-                print("🟣 token: '\(token)'")
-                if isFirstToken {
-                    completionOverlay.show(text: currentCompletion, near: cursorRect, fontSize: fontSize)
-                    keyMonitor.isOverlayVisible = true
+                guard let self, !full.isEmpty else { return }
+                if keyMonitor.isOverlayVisible, !completionOverlay.currentText.isEmpty {
+                    completionOverlay.update(text: full, near: cursorRect)
                 } else {
-                    completionOverlay.update(text: currentCompletion, near: cursorRect)
+                    print("👻 overlay.show '\(full.prefix(40))' at \(cursorRect.origin)")
+                    completionOverlay.show(text: full, near: cursorRect, fontSize: fontSize)
+                    keyMonitor.isOverlayVisible = true
                 }
             }
-        } onComplete: {
-            print("✅ onComplete fired")
-        }
+        } onComplete: {}
     }
 }
