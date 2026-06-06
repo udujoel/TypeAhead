@@ -1,29 +1,35 @@
 #!/bin/sh
-# Run TypeAhead standalone (NOT under Xcode's debugger) with logs in this terminal.
+# Run TypeAhead standalone with logs, the way that makes Accessibility work.
 #
-# Why: TypeAhead reads other apps' text via the Accessibility API. When the app is
-# launched with Cmd+R, Xcode's debugger attaches and macOS denies those cross-process
-# AX reads (error -25204) — so ghost text can't find the caret and Tab is flaky.
-# Launching from a terminal attaches no debugger (AX works) and is a TTY (logs stream).
+# Why `open` and not just running the binary: macOS attributes Accessibility permission
+# to the "responsible process". A binary exec'd from a shell makes Terminal responsible
+# (and Terminal usually isn't granted AX) → cross-process reads fail with -25204, even
+# though the app reports trusted=true. `open` launches via LaunchServices, so TypeAhead
+# is its own responsible process and its own grant applies. (Cmd+R is worse still — the
+# debugger becomes responsible.)
 #
 # Usage:
-#   1. Build in Xcode once with Cmd+B (NOT Cmd+R), or: xcodebuild -scheme TypeAhead build
-#   2. ./run.sh
-#   3. Grant Accessibility if prompted, then type in any app.
-
-set -e
+#   1. Build once: Cmd+B in Xcode (NOT Cmd+R), or `xcodebuild -scheme TypeAhead build`.
+#   2. ./run.sh        # launches the app and tails its log here
+#   (Ctrl+C stops tailing; the app keeps running. Quit it from the menu bar.)
 
 APP=$(ls -dt "$HOME"/Library/Developer/Xcode/DerivedData/TypeAhead-*/Build/Products/Debug/TypeAhead.app 2>/dev/null | head -1)
 if [ -z "$APP" ]; then
-  echo "No built app found. Build it first: open the project and press Cmd+B."
+  echo "No built app found. Build it first (Cmd+B in Xcode)."
   exit 1
 fi
 
-# Stop any standalone instance we previously launched (leaves Xcode-run instances alone;
-# stop those with Xcode's Stop button / Cmd+.).
+LOG="${TMPDIR:-/tmp}/typeahead.log"
+: > "$LOG"   # truncate
+
+# Stop any previously-launched standalone instance (leaves Xcode-run ones alone).
 pkill -x TypeAhead 2>/dev/null || true
 sleep 0.5
 
-echo "Launching: $APP"
-echo "(Press Ctrl+C here to quit. Logs stream below.)"
-exec "$APP/Contents/MacOS/TypeAhead"
+# LaunchServices launch (correct responsible process) with output redirected to LOG.
+open -n --stdout "$LOG" --stderr "$LOG" "$APP"
+
+echo "Launched: $APP"
+echo "Log: $LOG  (tailing — Ctrl+C to stop; app keeps running)"
+echo "----------------------------------------------------------------"
+exec tail -f "$LOG"
