@@ -18,6 +18,15 @@ final class AccessibilityManager {
     /// in Xcode changes the binary and silently revokes this, so it must be re-granted.
     var isProcessTrusted: Bool { AXIsProcessTrusted() }
 
+    /// Like `isProcessTrusted`, but when untrusted it shows the system "grant Accessibility"
+    /// dialog and adds the app to System Settings → Accessibility (toggled off) so the user
+    /// can flip it on. Call once at launch.
+    @discardableResult
+    func promptForTrustIfNeeded() -> Bool {
+        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        return AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+    }
+
     /// Whether a debugger (Xcode/LLDB) is attached. When it is, macOS treats the debugger
     /// as the "responsible process" and DENIES cross-process Accessibility reads with
     /// error -25204 — even though `isProcessTrusted` returns true. That's why ghost text

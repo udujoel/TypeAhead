@@ -84,6 +84,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // so ghost text can't find the caret — the app must be launched standalone, not Cmd+R.
         print("🔐 Accessibility trusted: \(deps.accessibilityManager.isProcessTrusted)")
         print("🔬 Debugger attached: \(deps.accessibilityManager.isBeingDebugged) (if true, AX reads will fail — launch the app from Finder, not Xcode Run)")
+        // If untrusted, show the system prompt and add the app to the Accessibility list
+        // so the user can grant it with one toggle.
+        if !deps.accessibilityManager.isProcessTrusted {
+            deps.accessibilityManager.promptForTrustIfNeeded()
+            print("ℹ️ Not trusted — prompted. Enable TypeAhead in System Settings → Privacy & Security → Accessibility, then relaunch.")
+        }
 
         // Load (and download if needed) the user's chosen model on startup.
         // ModelManager streams progress into its statuses dict, which the UI observes.
