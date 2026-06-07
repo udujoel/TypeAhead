@@ -120,6 +120,25 @@ import Testing
         #expect(!result.contains("[Screen:"))
     }
 
+    @Test func screenContextInflatesPromptLengthBeyondTypedText() {
+        // This documents the bug that the minimum-prefix guard in AppDependencies must
+        // check context.textBeforeCursor, NOT the assembled prompt. When screen context
+        // is present, buildPrompt returns "[Screen: ...]<newline><typed>" which can be
+        // 130+ chars even when the user has typed only 2 characters.
+        let ctx = TextContext(textBeforeCursor: "hi", textAfterCursor: "", appName: "Notes", windowTitle: "")
+        let result = ContextBuilder.buildPrompt(
+            context: ctx, clipboard: nil, history: [], customInstructions: "",
+            screenContext: "A document about quarterly earnings reports and financial projections."
+        )
+        // Typed text is only 2 chars — well below any reasonable minimum.
+        #expect(ctx.textBeforeCursor.count == 2)
+        // But the assembled prompt is much longer because of the screen context hint.
+        #expect(result.count > 50)
+        // And it correctly contains both parts.
+        #expect(result.contains("[Screen:"))
+        #expect(result.contains("hi"))
+    }
+
     // MARK: - buildSuffix (fill-in-middle)
 
     @Test func suffixEmptyAtEndOfText() {

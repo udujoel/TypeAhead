@@ -57,6 +57,12 @@ final class AppDependencies {
             screenContextCache = nil
         }
 
+        // Require a minimum typed prefix before firing. Check textBeforeCursor directly —
+        // NOT the assembled prompt — so that screen context (which can be 120+ chars of OCR
+        // text) doesn't inflate the count past the threshold when the user has only typed
+        // 1-2 characters. 8 chars = one meaningful word + space.
+        guard context.textBeforeCursor.trimmingCharacters(in: .whitespacesAndNewlines).count >= 8 else { return }
+
         let prompt = ContextBuilder.buildPrompt(
             context: context,
             clipboard: nil,
@@ -64,10 +70,6 @@ final class AppDependencies {
             customInstructions: settings.customInstructions,
             screenContext: screenContext
         )
-        // Require a minimum prompt length. A prompt shorter than this doesn't give the
-        // model enough signal — it will guess based on common continuations ("and", "the")
-        // rather than the user's actual intent. 8 chars = one meaningful word + space.
-        guard prompt.trimmingCharacters(in: .whitespacesAndNewlines).count >= 8 else { return }
 
         // Fill-in-middle context: only the AX path knows what's after the cursor.
         // The keystroke-buffer fallback has no suffix, so this stays empty there.
