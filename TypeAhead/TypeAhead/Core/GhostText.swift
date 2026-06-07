@@ -37,7 +37,10 @@ enum GhostText {
         // began with whitespace) and the text before the cursor doesn't already end with
         // a space, prepend one — so "work" + "for" reads "work for", not "workfor". When
         // the model continues the current word ("wor" + "king"), no space is added.
-        if !continuation.isEmpty, isFillInMiddle, rawBeginsNewWord(raw), !endsWithWhitespace(typed) {
+        // Exception: closing/terminal punctuation attaches directly without a leading space
+        // ("How are you" + "?" should give "?" not " ?").
+        if !continuation.isEmpty, isFillInMiddle, rawBeginsNewWord(raw), !endsWithWhitespace(typed),
+           !startsWithClosingPunctuation(continuation) {
             continuation = " " + continuation
         }
 
@@ -45,6 +48,15 @@ enum GhostText {
         guard isUsableGhost(continuation) else { return "" }
 
         return continuation
+    }
+
+    /// Closing/terminal punctuation that attaches directly to the preceding word (no leading space).
+    private static let closingPunctuation: Set<Character> = ["?", "!", ".", ",", ":", ";", ")", "]", "}", "'", "\""]
+
+    /// True if `s` starts with a closing/terminal punctuation character.
+    private static func startsWithClosingPunctuation(_ s: String) -> Bool {
+        guard let first = s.first else { return false }
+        return closingPunctuation.contains(first)
     }
 
     /// True if the model's continuation starts a new word (first non-newline char is a space).
@@ -139,11 +151,15 @@ enum GhostText {
     /// - A lone backslash (model outputting an escape or LaTeX fragment)
     /// - A standalone hyphen at word-start (model suggesting "co-working" for "co";
     ///   valid hyphens in compound words like "well-defined" are allowed via the word check)
-    /// - Any string with no letters or digits (pure punctuation / whitespace remnants)
+    /// - Any string with no letters or digits UNLESS it's a standalone terminal punctuation
+    ///   character (?, !, ), ], }) — those are useful punctuation suggestions.
     static func isUsableGhost(_ ghost: String) -> Bool {
         let s = ghost.trimmingCharacters(in: .whitespaces)
         guard !s.isEmpty else { return false }
-        // Must contain at least one letter or digit — pure punctuation is useless.
+        // Standalone terminal/closing punctuation is a valid suggestion on its own.
+        let usableStandalone: Set<Character> = ["?", "!", ")", "]", "}"]
+        if s.count == 1, let only = s.first, usableStandalone.contains(only) { return true }
+        // Otherwise must contain at least one letter or digit — stray commas, ellipses, etc. are useless.
         guard s.contains(where: { $0.isLetter || $0.isNumber }) else { return false }
         // Lone backslash or backslash-only prefix.
         if s.hasPrefix("\\") && !s.dropFirst().contains(where: { $0.isLetter }) { return false }
