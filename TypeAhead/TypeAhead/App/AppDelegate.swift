@@ -69,9 +69,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if isMidWordCompletion,
                    let ctx = deps.accessibilityManager.readTextContext(),
                    let partial = ContextBuilder.currentWord(context: ctx) {
-                    // Replace the partial word with the completed form + space.
+                    // The ghost text is the SUFFIX the model added after the cursor, not
+                    // the full completed word. Reconstruct the full word by prepending the
+                    // partial prefix already typed: "wor" + ghost "king" → replace with
+                    // "working ", not "king " (which would produce "king" not "working").
+                    let fullWord = partial + firstWord
                     deps.accessibilityManager.replaceCurrentWord(
-                        firstWord + " ", wordLength: partial.count, into: element)
+                        fullWord + " ", wordLength: partial.count, into: element)
                 } else {
                     let injection = leading + firstWord + " "
                     deps.accessibilityManager.insertCompletion(injection, into: element)

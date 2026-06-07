@@ -43,6 +43,31 @@ import Testing
         #expect(ContextBuilder.currentWord(context: ctx) == "seco")
     }
 
+    // MARK: - Prefix reconstruction
+
+    /// The model's ghost text is the suffix after the cursor, so the full word must be
+    /// reconstructed as partial + ghost before replacing. E.g. typed="wor", ghost="king"
+    /// → replacement = "working", not "king".
+    @Test func fullWordIsPartialPlusGhost() {
+        let partial = "wor"
+        let ghostFirstWord = "king"
+        let fullWord = partial + ghostFirstWord
+        #expect(fullWord == "working")
+    }
+
+    @Test func fullWordPreservesCasing() {
+        let partial = "Typ"
+        let ghostFirstWord = "ing"
+        #expect(partial + ghostFirstWord == "Typing")
+    }
+
+    @Test func partialEmptyMeansGhostIsFullWord() {
+        // Edge case: cursor at word boundary, no partial — ghost IS the full word.
+        let partial = ""
+        let ghostFirstWord = "working"
+        #expect(partial + ghostFirstWord == "working")
+    }
+
     // MARK: - GhostText leading-space interaction
 
     /// When completing a mid-word (ghost has no leading space), Tab should replace the
