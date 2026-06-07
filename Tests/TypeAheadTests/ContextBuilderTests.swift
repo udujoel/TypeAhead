@@ -81,6 +81,64 @@ import Testing
         #expect(!result.contains("PAST-HISTORY"))
     }
 
+    // MARK: - screenContext injection
+
+    @Test func screenContextPrependsHint() {
+        let ctx = TextContext(textBeforeCursor: "The revenue was", textAfterCursor: "", appName: "Numbers", windowTitle: "")
+        let result = ContextBuilder.buildPrompt(
+            context: ctx, clipboard: nil, history: [], customInstructions: "",
+            screenContext: "Q3 Report – Total: $4.2M"
+        )
+        #expect(result.hasPrefix("[Screen: Q3 Report – Total: $4.2M]"))
+        #expect(result.contains("The revenue was"))
+    }
+
+    @Test func screenContextAbsentWhenNil() {
+        let ctx = TextContext(textBeforeCursor: "Hello world", textAfterCursor: "", appName: "Notes", windowTitle: "")
+        let result = ContextBuilder.buildPrompt(context: ctx, clipboard: nil, history: [], customInstructions: "", screenContext: nil)
+        #expect(!result.contains("[Screen:"))
+        #expect(result == "Hello world")
+    }
+
+    @Test func screenContextTruncatedAt120Chars() {
+        let longScreen = String(repeating: "x", count: 200)
+        let ctx = TextContext(textBeforeCursor: "abc", textAfterCursor: "", appName: "Notes", windowTitle: "")
+        let result = ContextBuilder.buildPrompt(
+            context: ctx, clipboard: nil, history: [], customInstructions: "",
+            screenContext: longScreen
+        )
+        // "[Screen: " (9) + 120 x's + "]" (1) = 130 chars in the hint
+        let hintEnd = result.firstIndex(of: "\n") ?? result.endIndex
+        let hint = String(result[..<hintEnd])
+        #expect(hint == "[Screen: \(String(repeating: "x", count: 120))]")
+    }
+
+    @Test func emptyScreenContextBehavesLikeNil() {
+        let ctx = TextContext(textBeforeCursor: "Hello", textAfterCursor: "", appName: "Notes", windowTitle: "")
+        let result = ContextBuilder.buildPrompt(context: ctx, clipboard: nil, history: [], customInstructions: "", screenContext: "  ")
+        #expect(result == "Hello")
+        #expect(!result.contains("[Screen:"))
+    }
+
+    @Test func screenContextInflatesPromptLengthBeyondTypedText() {
+        // This documents the bug that the minimum-prefix guard in AppDependencies must
+        // check context.textBeforeCursor, NOT the assembled prompt. When screen context
+        // is present, buildPrompt returns "[Screen: ...]<newline><typed>" which can be
+        // 130+ chars even when the user has typed only 2 characters.
+        let ctx = TextContext(textBeforeCursor: "hi", textAfterCursor: "", appName: "Notes", windowTitle: "")
+        let result = ContextBuilder.buildPrompt(
+            context: ctx, clipboard: nil, history: [], customInstructions: "",
+            screenContext: "A document about quarterly earnings reports and financial projections."
+        )
+        // Typed text is only 2 chars — well below any reasonable minimum.
+        #expect(ctx.textBeforeCursor.count == 2)
+        // But the assembled prompt is much longer because of the screen context hint.
+        #expect(result.count > 50)
+        // And it correctly contains both parts.
+        #expect(result.contains("[Screen:"))
+        #expect(result.contains("hi"))
+    }
+
     // MARK: - buildSuffix (fill-in-middle)
 
     @Test func suffixEmptyAtEndOfText() {

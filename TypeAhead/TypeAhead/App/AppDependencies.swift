@@ -19,6 +19,9 @@ final class AppDependencies {
     }
     let keyMonitor = KeyEventMonitor()
 
+    private var screenContextCache: (text: String, at: Date)?
+    private let screenContextCacheTTL: TimeInterval = 2.0
+
     private func runCompletion() async {
         guard inferenceEngine.isLoaded else { return }
 
@@ -38,16 +41,35 @@ final class AppDependencies {
             source = "buffer"
         }
 
+        // Screen context: OCR the frontmost window to give the model ambient topic signal.
+        // Cache for 2s so rapid keystrokes don't re-capture on every completion.
+        let screenContext: String?
+        if settings.useScreenshotContext {
+            if let cache = screenContextCache, Date().timeIntervalSince(cache.at) < screenContextCacheTTL {
+                screenContext = cache.text
+            } else {
+                let extracted = await ScreenshotContextProvider.captureAndExtractText()
+                screenContext = extracted
+                if let text = extracted { screenContextCache = (text, Date()) }
+            }
+        } else {
+            screenContext = nil
+            screenContextCache = nil
+        }
+
+        // Require a minimum typed prefix before firing. Check textBeforeCursor directly —
+        // NOT the assembled prompt — so that screen context (which can be 120+ chars of OCR
+        // text) doesn't inflate the count past the threshold when the user has only typed
+        // 1-2 characters. 8 chars = one meaningful word + space.
+        guard context.textBeforeCursor.trimmingCharacters(in: .whitespacesAndNewlines).count >= 8 else { return }
+
         let prompt = ContextBuilder.buildPrompt(
             context: context,
             clipboard: nil,
             history: [],
-            customInstructions: settings.customInstructions
+            customInstructions: settings.customInstructions,
+            screenContext: screenContext
         )
-        // Require a minimum prompt length. A prompt shorter than this doesn't give the
-        // model enough signal — it will guess based on common continuations ("and", "the")
-        // rather than the user's actual intent. 8 chars = one meaningful word + space.
-        guard prompt.trimmingCharacters(in: .whitespacesAndNewlines).count >= 8 else { return }
 
         // Fill-in-middle context: only the AX path knows what's after the cursor.
         // The keystroke-buffer fallback has no suffix, so this stays empty there.
