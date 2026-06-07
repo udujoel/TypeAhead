@@ -222,6 +222,65 @@ stray leading space.
 
 ---
 
+## 8. Cross-app compatibility — ghost text and Tab in non-TextEdit apps
+
+**Problem.** Suggestions and Tab-to-accept work reliably in TextEdit (a native NSTextField/
+AppKit app) but fail in most other interfaces: the ghost text doesn't appear at the cursor, and
+pressing Tab passes through as a literal tab instead of accepting the suggestion.
+
+**Root cause (from logs).** Two distinct failure modes observed in the run logs:
+
+- **`[AX]` path** — Accessibility API successfully reads the focused field and reports a valid
+  caret rect (`kAXBoundsForRange`). Ghost text is shown, but some apps (e.g. Electron-based
+  editors, web forms in browsers) reject `AXUIElementSetAttributeValue` for text insertion, so
+  Tab swallows the key but inserts nothing.
+- **`[buffer]` path** — AX cannot read the focused field (often in web browsers, terminal
+  emulators, or sandboxed apps). TypeAhead falls back to a keystroke buffer to track the
+  prefix, but the caret rect is unavailable → negative / zero cursor coordinates → overlay
+  rendered off-screen or at the wrong app entirely. Tab acceptance also fails because there is
+  no AX element to write into; the only fallback (`injectText` via CGEvent) works in some apps
+  and silently does nothing in others.
+
+**Observed from logs:**
+```
+⌨️ [buffer] prompt='...' cursor=(-1331.87890625, 113.203125, 0.0, 20.0)   ← off-screen
+👻 overlay.show 'F' at (1035.0, 543.0)                                    ← different app?
+```
+
+**Proposed design.**
+
+- **CGEvent insertion fallback.** When `insertCompletion(_:into:)` via AX fails (returns an
+  error), synthesise keystrokes via `CGEventCreateKeyboardEvent` for each character instead of
+  silently dropping. Works for most apps that accept hardware keyboard input (browsers,
+  terminals, Electron). Add an `insertionMethod` enum: `.ax` (default) → `.cgEvent` (fallback).
+- **Caret rect from mouse cursor position.** When `kAXBoundsForRange` fails (buffer path),
+  use `NSEvent.mouseLocation` as a last-resort anchor for overlay positioning. Not pixel-perfect
+  but keeps the overlay close to where the user is typing. Fall back further to a fixed corner
+  if even that is unavailable.
+- **Per-app insertion strategy.** Extend `AppExceptionList` or add a new `AppInsertionPolicy`
+  map: keyed by bundle-ID prefix, stores preferred insertion method and whether overlay is
+  suppressed. Pre-populate with known cases: `com.google.Chrome` → cgEvent; `com.microsoft.VSCode`
+  → cgEvent; etc. User-editable in Settings.
+- **Tab-not-intercepted guard.** Some apps consume Tab before `CGEventTap` sees it (e.g. web
+  `<input>` inside a browser focuses the next element). Detect this by checking whether the
+  focused-element changes within ~50ms of a Tab press; if so, re-grant focus and cancel the
+  acceptance. Alternatively, offer an alternate accept key (e.g. `⌥→` / Option+Right).
+- **Alternate accept key.** Let the user configure a non-Tab accept key (`⌥→` is least
+  intrusive in most apps). Paired with the correct caret-rect anchor and cgEvent insertion, this
+  would work anywhere the keyboard input works.
+
+**Files.** `AccessibilityManager.swift` (insertion fallback), `OverlayPositioner.swift`
+(last-resort caret anchor), `AppSettings` + `AppExceptionList.swift` (per-app policy),
+`KeyEventMonitor.swift` (alternate accept key), Settings UI (policy map + accept-key picker).
+**Effort.** Large. **Risk.** CGEvent injection can trigger Input Monitoring permission prompts;
+some apps may still reject synthetic events. Privacy: observing all keystrokes for the buffer
+path already requires Input Monitoring; no new permissions needed for CGEvent injection.
+**Acceptance.** Ghost text and Tab acceptance work in Chrome, Safari, VS Code, and terminal
+emulators (iTerm2/Terminal.app) in addition to TextEdit; negative caret coords no longer
+appear in logs; per-app override visible in Settings.
+
+---
+
 ## Cross-cutting notes
 - Keep everything **on-device** and **no-network for completions** (project rules).
 - Mind the latency targets (P50 < 80ms, P95 < 250ms) when adding prompt context (3, 4, 6).
