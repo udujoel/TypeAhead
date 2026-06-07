@@ -43,29 +43,31 @@ import Testing
         #expect(ContextBuilder.currentWord(context: ctx) == "seco")
     }
 
-    // MARK: - Prefix reconstruction
+    // MARK: - Insert-suffix behaviour
 
-    /// The model's ghost text is the suffix after the cursor, so the full word must be
-    /// reconstructed as partial + ghost before replacing. E.g. typed="wor", ghost="king"
-    /// → replacement = "working", not "king".
-    @Test func fullWordIsPartialPlusGhost() {
-        let partial = "wor"
-        let ghostFirstWord = "king"
-        let fullWord = partial + ghostFirstWord
-        #expect(fullWord == "working")
+    /// Ghost in fill-in-middle mode is already the suffix after the cursor.
+    /// Inserting the suffix directly appends to the partial word already in the field:
+    /// field="wor" + insert("king ") = "working ". No replacement needed.
+    @Test func ghostSuffixInsertedAfterPartialGivesFullWord() {
+        // Simulate what GhostText.build returns for typed="wor", raw="king"
+        let ghost = GhostText.build(typed: "wor", raw: "king", isFillInMiddle: true, maxWords: 4)
+        // Ghost is the suffix — no leading space for mid-word continuation.
+        #expect(ghost == "king")
+        #expect(!ghost.hasPrefix(" "))
+        // Tab inserts ghost + " " after the partial; the field already has "wor".
+        // "wor" (in field) + "king " (inserted) = "working ".
+        let textInField = "wor"
+        let afterInsert = textInField + ghost + " "
+        #expect(afterInsert == "working ")
     }
 
-    @Test func fullWordPreservesCasing() {
-        let partial = "Typ"
-        let ghostFirstWord = "ing"
-        #expect(partial + ghostFirstWord == "Typing")
-    }
-
-    @Test func partialEmptyMeansGhostIsFullWord() {
-        // Edge case: cursor at word boundary, no partial — ghost IS the full word.
-        let partial = ""
-        let ghostFirstWord = "working"
-        #expect(partial + ghostFirstWord == "working")
+    @Test func newWordGhostHasLeadingSpaceAndInsertsCorrectly() {
+        // After a complete word (cursor at space boundary), ghost carries a leading space.
+        let ghost = GhostText.build(typed: "I am", raw: " worried", isFillInMiddle: true, maxWords: 4)
+        #expect(ghost.hasPrefix(" "))
+        // Tab inserts the ghost (including its leading space) + trailing space.
+        let injection = ghost + " "
+        #expect(injection == " worried ")
     }
 
     // MARK: - GhostText leading-space interaction

@@ -65,23 +65,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
+            // In fill-in-middle mode the ghost text is already the SUFFIX after the
+            // cursor — the partial word is already in the field. Inserting the suffix
+            // appends it directly: "wor" + insert("ried ") = "worried ". No replacement
+            // or backspacing needed, which avoids AX range-select failures and CGEvent
+            // timing races that caused the "worworried" doubling bug.
+            //
+            // Leading space (new-word ghost): prepend the separator before firstWord.
+            // No leading space (mid-word ghost): insert just the suffix, no separator.
+            let injection = leading + firstWord + " "
             if let element = deps.accessibilityManager.focusedElement() {
-                if isMidWordCompletion,
-                   let ctx = deps.accessibilityManager.readTextContext(),
-                   let partial = ContextBuilder.currentWord(context: ctx) {
-                    // The ghost text is the SUFFIX the model added after the cursor, not
-                    // the full completed word. Reconstruct the full word by prepending the
-                    // partial prefix already typed: "wor" + ghost "king" → replace with
-                    // "working ", not "king " (which would produce "king" not "working").
-                    let fullWord = partial + firstWord
-                    deps.accessibilityManager.replaceCurrentWord(
-                        fullWord + " ", wordLength: partial.count, into: element)
-                } else {
-                    let injection = leading + firstWord + " "
-                    deps.accessibilityManager.insertCompletion(injection, into: element)
-                }
+                deps.accessibilityManager.insertCompletion(injection, into: element)
             } else {
-                let injection = leading + firstWord + " "
                 deps.accessibilityManager.injectText(injection)
             }
 
