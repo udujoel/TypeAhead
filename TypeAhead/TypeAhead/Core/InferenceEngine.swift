@@ -39,12 +39,8 @@ final class InferenceEngine {
     private var loadedModelID: String = ""
     private var lastLoggedLoadPct = -1
 
-    // Instruction placed in the user turn; the model turn is then prefilled with the
-    // user's text (see HFBridge assistant-prefill), so the model continues that text.
-    private static let instruction =
-        "Continue the text the user is writing. Reply with only the next few words that come "
-        + "naturally, matching their wording and style. Do not repeat what they already wrote, "
-        + "and do not add quotes, labels, or explanations."
+    // Instruction building is in PersonalizationEngine (pure Swift, SPM-testable without MLXLLM).
+    // InferenceEngine delegates to it so the logic can be unit-tested independently.
 
     var isAvailable: Bool { isLoaded }
     var availabilityDescription: String { isLoaded ? "MLX model loaded" : "No model loaded" }
@@ -110,17 +106,23 @@ final class InferenceEngine {
     /// Generates a completion for `prompt`. `onUpdate` receives the full cleaned
     /// completion text as it grows (call it to refresh the ghost-text overlay).
     /// `onComplete` fires once when generation finishes — unless superseded.
+    ///
+    /// - Parameter personaNote: Optional persona/style note from PersonalizationEngine
+    ///   (customInstructions + frequent history words). Prepended to the base instruction.
     func complete(
         prompt: String,
         suffix: String = "",
         maxTokens: Int,
         maxWords: Int = 0,
+        personaNote: String? = nil,
         onUpdate: @escaping @Sendable (String) -> Void,
         onComplete: @escaping @Sendable () -> Void
     ) {
         guard isLoaded, let container else { onComplete(); return }
 
         currentTask?.cancel()
+
+        let instruction = PersonalizationEngine.buildInstruction(personaNote: personaNote)
 
         // ASSISTANT-PREFILL (assembled in HFBridge): the model turn is seeded with `prompt`
         // and left open, so the instruct model continues the user's own text in-distribution.
@@ -129,7 +131,7 @@ final class InferenceEngine {
         currentTask = Task {
             do {
                 let userInput = UserInput(prompt: .chat([
-                    Chat.Message.system(Self.instruction),
+                    Chat.Message.system(instruction),
                     Chat.Message.user(prompt),
                 ]))
 

@@ -50,15 +50,28 @@ final class AppDependencies {
         // The keystroke-buffer fallback has no suffix, so this stays empty there.
         let suffix = ContextBuilder.buildSuffix(context: context)
 
+        // Personalization: build the system instruction note from custom instructions
+        // + frequency-weighted history examples. Fetched fresh each completion so the
+        // model adapts as new words are accepted — the cost is a SwiftData fetch (~0ms).
+        let historyExamples = await personalizationEngine.examples(
+            strength: settings.personalizationStrength,
+            limit: 5
+        )
+        let personaNote = PersonalizationEngine.buildPersonaNote(
+            customInstructions: settings.customInstructions,
+            examples: historyExamples
+        )
+
         guard let cursorRect = accessibilityManager.cursorScreenRect() else { return }
         let fontSize = accessibilityManager.focusedFontSize()
-        print("⌨️ [\(source)] prompt='\(prompt.suffix(60))' suffix='\(suffix.prefix(40))' cursor=\(cursorRect)")
+        print("⌨️ [\(source)] prompt='\(prompt.suffix(60))' suffix='\(suffix.prefix(40))' persona=\(personaNote != nil) cursor=\(cursorRect)")
 
         inferenceEngine.complete(
             prompt: prompt,
             suffix: suffix,
             maxTokens: settings.completionLength.maxTokens,
-            maxWords: settings.completionLength.maxWords
+            maxWords: settings.completionLength.maxWords,
+            personaNote: personaNote
         ) { [weak self] full in
             // Called on the model executor — hop to main to touch UI.
             Task { @MainActor [weak self] in
