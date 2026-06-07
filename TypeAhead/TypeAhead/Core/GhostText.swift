@@ -40,6 +40,10 @@ enum GhostText {
         if !continuation.isEmpty, isFillInMiddle, rawBeginsNewWord(raw), !endsWithWhitespace(typed) {
             continuation = " " + continuation
         }
+
+        // Quality gate: reject clearly-junk completions before showing them.
+        guard isUsableGhost(continuation) else { return "" }
+
         return continuation
     }
 
@@ -127,5 +131,26 @@ enum GhostText {
     static func normalizeWhitespace(_ s: String) -> String {
         s.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\r" || $0 == "\t" })
             .joined(separator: " ")
+    }
+
+    /// Returns false for ghost text that is clearly junk — would confuse rather than help.
+    ///
+    /// Rejects:
+    /// - A lone backslash (model outputting an escape or LaTeX fragment)
+    /// - A standalone hyphen at word-start (model suggesting "co-working" for "co";
+    ///   valid hyphens in compound words like "well-defined" are allowed via the word check)
+    /// - Any string with no letters or digits (pure punctuation / whitespace remnants)
+    static func isUsableGhost(_ ghost: String) -> Bool {
+        let s = ghost.trimmingCharacters(in: .whitespaces)
+        guard !s.isEmpty else { return false }
+        // Must contain at least one letter or digit — pure punctuation is useless.
+        guard s.contains(where: { $0.isLetter || $0.isNumber }) else { return false }
+        // Lone backslash or backslash-only prefix.
+        if s.hasPrefix("\\") && !s.dropFirst().contains(where: { $0.isLetter }) { return false }
+        // Leading hyphen with no prior word context — e.g. "-working" for "co".
+        // A hyphen IS valid mid-word ("well-" in "well-defined") but not as the
+        // very first character of a ghost that would be appended to partial text.
+        if s.hasPrefix("-"), let second = s.dropFirst().first, second.isLetter { return false }
+        return true
     }
 }

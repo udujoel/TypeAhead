@@ -133,3 +133,64 @@ import Testing
         #expect(CompletionTextSanitizer.sanitize("just normal text") == "just normal text")
     }
 }
+
+// MARK: - Ghost quality gate
+
+@Suite struct GhostTextQualityTests {
+
+    @Test func rejectsLoneBackslash() {
+        #expect(!GhostText.isUsableGhost("\\"))
+        #expect(!GhostText.isUsableGhost("\\\\"))
+    }
+
+    @Test func rejectsLeadingHyphenWord() {
+        // "-working" arises when model continues "co" → "co-working"; reject it.
+        #expect(!GhostText.isUsableGhost("-working"))
+        #expect(!GhostText.isUsableGhost("-based"))
+    }
+
+    @Test func allowsHyphenatedWordMidGhost() {
+        // "well-defined" is a valid compound — the hyphen is mid-word, not leading.
+        #expect(GhostText.isUsableGhost("well-defined"))
+    }
+
+    @Test func rejectsPurePunctuation() {
+        // A standalone comma or ellipsis with no letters is not useful.
+        #expect(!GhostText.isUsableGhost(","))
+        #expect(!GhostText.isUsableGhost("..."))
+    }
+
+    @Test func allowsPunctuationFollowedByWord() {
+        // ". It lets me" — starts with period but has letters, so valid.
+        #expect(GhostText.isUsableGhost(". It lets me"))
+        #expect(GhostText.isUsableGhost(". That is"))
+    }
+
+    @Test func allowsNormalCompletions() {
+        #expect(GhostText.isUsableGhost("coding is fun"))
+        #expect(GhostText.isUsableGhost("ting "))     // suffix of "Wri" → "Writing"
+        #expect(GhostText.isUsableGhost("solutions for real problems"))
+    }
+
+    @Test func rejectsEmpty() {
+        #expect(!GhostText.isUsableGhost(""))
+        #expect(!GhostText.isUsableGhost("   "))
+    }
+
+    // End-to-end: backslash raw output becomes empty ghost via build()
+    @Test func buildFiltersBackslashRaw() {
+        let ghost = GhostText.build(typed: "I love c", raw: "\\\n", isFillInMiddle: true, maxWords: 4)
+        #expect(ghost.isEmpty)
+    }
+
+    // End-to-end: leading-hyphen output becomes empty ghost via build()
+    @Test func buildFiltersLeadingHyphen() {
+        let ghost = GhostText.build(
+            typed: "I love co",
+            raw: "-working spaces. They offer",
+            isFillInMiddle: true,
+            maxWords: 4
+        )
+        #expect(ghost.isEmpty)
+    }
+}

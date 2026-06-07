@@ -11,10 +11,18 @@ enum ContextBuilder {
     private static let maxPrefixChars = 160   // smaller = faster first token on small models
     private static let maxSuffixChars = 120   // text after the cursor, for fill-in-middle
 
+    /// Minimum characters the trimmed tail must have before we discard the prior context.
+    /// When the user just started a new sentence / paragraph and has typed fewer than
+    /// this many chars, we keep the full 160-char prefix so the model has enough context
+    /// to produce a coherent suggestion. 25 chars ≈ "I love coding." — enough to anchor.
+    private static let minTailChars = 25
+
     /// Builds a compact prompt: the text immediately before the cursor, trimmed
-    /// to the current sentence/line. The keystroke buffer accumulates everything
-    /// typed since launch, so without trimming the prompt balloons with unrelated
-    /// earlier text and first-token latency suffers badly.
+    /// to the current sentence/line when that line is long enough to stand alone.
+    ///
+    /// If trimming would leave fewer than `minTailChars` characters (e.g. the user just
+    /// started a new paragraph), the full 160-char window is kept so the model can use
+    /// the surrounding context rather than guessing from 3-4 typed chars.
     ///
     /// `clipboard`/`history` are accepted for API compatibility but intentionally
     /// excluded — small models complete more accurately from a focused prompt.
@@ -26,16 +34,20 @@ enum ContextBuilder {
     ) -> String {
         var prefix = String(context.textBeforeCursor.suffix(maxPrefixChars))
 
-        // Trim to the start of the current sentence/line when a boundary exists,
-        // so the model focuses on what the user is actively writing.
+        // Trim to the start of the current sentence/line ONLY when the resulting tail
+        // is substantial enough to be self-contained. If the user just typed a few
+        // characters on a new line, keeping the prior context gives the model much
+        // better signal than the trimmed 8-char stub.
         if let boundary = prefix.range(
             of: #"[\.!\?\n][\s"')\]]*"#,
             options: [.regularExpression, .backwards]
         ) {
             let tail = String(prefix[boundary.upperBound...])
-            if !tail.trimmingCharacters(in: .whitespaces).isEmpty {
+            let tailContent = tail.trimmingCharacters(in: .whitespacesAndNewlines)
+            if tailContent.count >= minTailChars {
                 prefix = tail
             }
+            // else: keep the full prefix — the current sentence is too short to stand alone.
         }
 
         return prefix

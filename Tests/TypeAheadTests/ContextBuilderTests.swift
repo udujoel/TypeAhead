@@ -19,7 +19,22 @@ import Testing
         #expect(!result.contains("<|fim_prefix|>"))
     }
 
-    @Test func trimsToCurrentSentence() {
+    @Test func trimsToCurrentSentenceWhenTailIsLongEnough() {
+        // "Now I am writing the second sentence here" = 41 chars >= minTailChars (25).
+        // Tail is long enough to stand alone — trim to it.
+        let ctx = TextContext(
+            textBeforeCursor: "First sentence is done. Now I am writing the second sentence here",
+            textAfterCursor: "",
+            appName: "Notes",
+            windowTitle: ""
+        )
+        let result = ContextBuilder.buildPrompt(context: ctx, clipboard: nil, history: [], customInstructions: "")
+        #expect(result == "Now I am writing the second sentence here")
+    }
+
+    @Test func keepsFullContextWhenTailIsTooShort() {
+        // "Now the second" = 14 chars < 25 — too short to stand alone.
+        // Full prefix is kept so the model has context from the prior sentence.
         let ctx = TextContext(
             textBeforeCursor: "First sentence is done. Now the second",
             textAfterCursor: "",
@@ -27,7 +42,24 @@ import Testing
             windowTitle: ""
         )
         let result = ContextBuilder.buildPrompt(context: ctx, clipboard: nil, history: [], customInstructions: "")
-        #expect(result == "Now the second")
+        // Should contain the prior sentence as context, not just the 14-char tail.
+        #expect(result.contains("First sentence"))
+        #expect(result.contains("Now the second"))
+    }
+
+    @Test func keepsContextForNewParagraph() {
+        // Simulates starting a new paragraph after existing text.
+        // The new line "I love c" (8 chars) is far below minTailChars (25),
+        // so the model gets the full prior context, not just "I love c".
+        let ctx = TextContext(
+            textBeforeCursor: "Software design is my passion.\n\nI love c",
+            textAfterCursor: "",
+            appName: "TextEdit",
+            windowTitle: ""
+        )
+        let result = ContextBuilder.buildPrompt(context: ctx, clipboard: nil, history: [], customInstructions: "")
+        #expect(result.contains("Software design"))
+        #expect(result.contains("I love c"))
     }
 
     @Test func capsPrefixLength() {

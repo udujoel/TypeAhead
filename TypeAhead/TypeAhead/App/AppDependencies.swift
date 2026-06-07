@@ -44,7 +44,10 @@ final class AppDependencies {
             history: [],
             customInstructions: settings.customInstructions
         )
-        guard prompt.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else { return }
+        // Require a minimum prompt length. A prompt shorter than this doesn't give the
+        // model enough signal — it will guess based on common continuations ("and", "the")
+        // rather than the user's actual intent. 8 chars = one meaningful word + space.
+        guard prompt.trimmingCharacters(in: .whitespacesAndNewlines).count >= 8 else { return }
 
         // Fill-in-middle context: only the AX path knows what's after the cursor.
         // The keystroke-buffer fallback has no suffix, so this stays empty there.
