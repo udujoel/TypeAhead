@@ -68,7 +68,9 @@ enum ContextBuilder {
     /// useful signal for the next clause until the user starts typing it.
     static func shouldSuppressAtSentenceEnd(textBeforeCursor: String) -> Bool {
         let terminators: Set<Character> = [".", "!", "?", "。", "！", "？"]
-        let closingPunct: Set<Character> = ["\"", "'", "\u{2019}", "\u{2018}", ")", "]", "}", "»"]
+        // Includes macOS Smart Quotes curly doubles (U+201C/201D) so "He said "done.""
+        // is treated the same as the straight-quote equivalent.
+        let closingPunct: Set<Character> = ["\"", "'", "\u{2019}", "\u{2018}", "\u{201C}", "\u{201D}", ")", "]", "}", "»"]
         let trimmed = textBeforeCursor.trimmingCharacters(in: .whitespacesAndNewlines)
         for char in trimmed.reversed() {
             if closingPunct.contains(char) { continue }

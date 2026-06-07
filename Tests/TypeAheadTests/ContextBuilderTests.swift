@@ -159,8 +159,10 @@ import Testing
     }
 
     @Test func suppressSkipsClosingPunct() {
-        // Period hidden behind a closing quote — should still suppress.
+        // Straight double quote after a period.
         #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "He said \"done.\"") == true)
+        // macOS Smart Quotes curly double (U+201D) — the common case when Smart Quotes is on.
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "He said \u{201C}done.\u{201D}") == true)
         // Closing paren after exclamation.
         #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "Well done!)") == true)
     }
