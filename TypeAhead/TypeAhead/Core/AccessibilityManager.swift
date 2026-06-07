@@ -81,6 +81,12 @@ final class AccessibilityManager {
     }
 
     func insertCompletion(_ text: String, into element: AXUIElement) {
+        let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        guard AppInsertionPolicy.preferredMethod(forBundleID: bundleID) == .ax else {
+            // Known CGEvent app — skip AX and inject directly via keyboard synthesis.
+            injectText(text)
+            return
+        }
         let result = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString)
         if result != .success {
             print("⚠️ AX insertCompletion failed (\(result.rawValue)) — falling back to CGEvent injection")
