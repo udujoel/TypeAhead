@@ -139,6 +139,43 @@ import Testing
         #expect(result.contains("hi"))
     }
 
+    // MARK: - shouldSuppressAtSentenceEnd
+
+    @Test func suppressAfterPeriod() {
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "I went home.") == true)
+    }
+
+    @Test func suppressAfterExclamation() {
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "Great work!") == true)
+    }
+
+    @Test func suppressAfterQuestion() {
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "How are you?") == true)
+    }
+
+    @Test func suppressAfterFullWidthTerminators() {
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "完了。") == true)
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "本当？") == true)
+    }
+
+    @Test func suppressSkipsClosingPunct() {
+        // Period hidden behind a closing quote — should still suppress.
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "He said \"done.\"") == true)
+        // Closing paren after exclamation.
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "Well done!)") == true)
+    }
+
+    @Test func noSuppressInMiddleOfSentence() {
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "I went home. Then") == false)
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "Hello world") == false)
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "I love cod") == false)
+    }
+
+    @Test func noSuppressForEmptyInput() {
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "") == false)
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "   ") == false)
+    }
+
     // MARK: - buildSuffix (fill-in-middle)
 
     @Test func suffixEmptyAtEndOfText() {

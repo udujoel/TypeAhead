@@ -62,6 +62,21 @@ enum ContextBuilder {
         return prefix
     }
 
+    /// Returns true when the cursor sits right after a sentence terminator (`.!?` and
+    /// full-width equivalents), skipping over trailing closing punctuation (`"'"')]}»`).
+    /// Callers suppress completion generation at sentence boundaries — the model has no
+    /// useful signal for the next clause until the user starts typing it.
+    static func shouldSuppressAtSentenceEnd(textBeforeCursor: String) -> Bool {
+        let terminators: Set<Character> = [".", "!", "?", "。", "！", "？"]
+        let closingPunct: Set<Character> = ["\"", "'", "\u{2019}", "\u{2018}", ")", "]", "}", "»"]
+        let trimmed = textBeforeCursor.trimmingCharacters(in: .whitespacesAndNewlines)
+        for char in trimmed.reversed() {
+            if closingPunct.contains(char) { continue }
+            return terminators.contains(char)
+        }
+        return false
+    }
+
     /// Returns the partial word the user is currently typing (characters after the
     /// last whitespace before the cursor), or `nil` when the cursor is at a word
     /// boundary (trailing space or empty). Callers use this to decide between
