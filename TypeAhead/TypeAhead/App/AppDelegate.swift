@@ -47,7 +47,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 kVK_LeftArrow, kVK_RightArrow, kVK_UpArrow, kVK_DownArrow,
                 kVK_Home, kVK_End, kVK_PageUp, kVK_PageDown
             ]
-            guard !correctionKeyCodes.contains(Int(event.keyCode)) else { return }
+            if correctionKeyCodes.contains(Int(event.keyCode)) {
+                // Also cancel any pending debounce — inferenceEngine.cancelCurrent() only
+                // stops active generation; a debounce already queued (e.g. from the
+                // diverging character typed just before the backspace) would otherwise
+                // fire 180ms later and show a suggestion mid-correction.
+                deps.completionPipeline.cancel()
+                return
+            }
 
             deps.completionPipeline.keystrokeReceived()
         }
