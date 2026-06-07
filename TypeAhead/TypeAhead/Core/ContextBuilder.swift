@@ -20,9 +20,13 @@ enum ContextBuilder {
     /// Builds a compact prompt: the text immediately before the cursor, trimmed
     /// to the current sentence/line when that line is long enough to stand alone.
     ///
-    /// If trimming would leave fewer than `minTailChars` characters (e.g. the user just
-    /// started a new paragraph), the full 160-char window is kept so the model can use
-    /// the surrounding context rather than guessing from 3-4 typed chars.
+    /// Three cases based on how much the user has typed into the current sentence:
+    /// • ≥ minTailChars chars: trim to the current sentence — it stands alone.
+    /// • 0 chars (cursor right at a sentence boundary): trim to the previous boundary
+    ///   to prevent cross-paragraph contamination (e.g. "support," surfacing after
+    ///   "How are you doing today?" because the 160-char window spans two topics).
+    /// • 1…minTailChars-1 chars: keep the full 160-char window so the model has
+    ///   enough context to continue a sentence that's just begun.
     ///
     /// `clipboard`/`history` are accepted for API compatibility but intentionally
     /// excluded — small models complete more accurately from a focused prompt.
@@ -35,20 +39,32 @@ enum ContextBuilder {
     ) -> String {
         var prefix = String(context.textBeforeCursor.suffix(maxPrefixChars))
 
-        // Trim to the start of the current sentence/line ONLY when the resulting tail
-        // is substantial enough to be self-contained. If the user just typed a few
-        // characters on a new line, keeping the prior context gives the model much
-        // better signal than the trimmed 8-char stub.
-        if let boundary = prefix.range(
-            of: #"[\.!\?\n][\s"')\]]*"#,
-            options: [.regularExpression, .backwards]
-        ) {
+        // NOTE: String.range(of:options:) with [.regularExpression, .backwards] is
+        // unsupported by Foundation and silently finds the FIRST match, not the last.
+        // Use NSRegularExpression.matches and take the final element instead.
+        let boundaryPattern = #"[\.!\?\n][\s"')\]]*"#
+        if let boundary = lastRegexRange(in: prefix, pattern: boundaryPattern) {
             let tail = String(prefix[boundary.upperBound...])
             let tailContent = tail.trimmingCharacters(in: .whitespacesAndNewlines)
             if tailContent.count >= minTailChars {
+                // Current sentence is long enough to stand alone — trim here.
                 prefix = tail
+            } else if tailContent.isEmpty {
+                // Cursor is right at a sentence boundary (nothing typed yet in the new
+                // sentence). The full 160-char window likely spans a prior paragraph and
+                // the model will echo words from it. Trim back one more boundary so only
+                // the last complete sentence is used as context.
+                let beforeCurrentBoundary = String(prefix[..<boundary.lowerBound])
+                if let prevBoundary = lastRegexRange(in: beforeCurrentBoundary, pattern: boundaryPattern) {
+                    let lastSentencePlusTail = String(prefix[prevBoundary.upperBound...])
+                    if !lastSentencePlusTail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        prefix = lastSentencePlusTail
+                    }
+                }
+                // else: single sentence in the window — full prefix is all the context available.
             }
-            // else: keep the full prefix — the current sentence is too short to stand alone.
+            // else: 1…minTailChars-1 chars typed — keep full prefix so the model has enough
+            // context to continue a sentence that's only just begun.
         }
 
         // Prepend a compact screen-context hint so the model understands the user's topic
@@ -106,5 +122,17 @@ enum ContextBuilder {
             return String(suffix[..<boundary.upperBound])
         }
         return suffix
+    }
+
+    /// Returns the range of the LAST regex match in `text`, or nil if no match.
+    ///
+    /// `String.range(of:options:)` with `[.regularExpression, .backwards]` is
+    /// unsupported by Foundation and finds the first match instead of the last.
+    /// This helper uses `NSRegularExpression.matches` to get all matches and picks
+    /// the final one, giving the true rightmost occurrence.
+    static func lastRegexRange(in text: String, pattern: String) -> Range<String.Index>? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let ns = NSRange(text.startIndex..., in: text)
+        return regex.matches(in: text, range: ns).last.flatMap { Range($0.range, in: text) }
     }
 }
