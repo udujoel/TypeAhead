@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarMenu: StatusBarMenu?
@@ -31,10 +32,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 return  // typed along with the suggestion — keep it, no regeneration
             }
-            // Diverged (or nothing showing): clear and queue a fresh completion.
+            // Dismiss the overlay regardless.
             deps.keyMonitor.isOverlayVisible = false
             deps.inferenceEngine.cancelCurrent()
             deps.completionOverlay.hide(animated: false)
+
+            // Navigation and correction keys (backspace, delete, arrows) — only dismiss
+            // the overlay; do NOT queue a new suggestion. While the user is correcting text
+            // the inference engine would otherwise fight them: every backspace would trigger
+            // a new completion that pops up within 200ms. Suggestions resume automatically
+            // on the next printable keystroke.
+            let correctionKeyCodes: Set<Int> = [
+                kVK_Delete, kVK_ForwardDelete,
+                kVK_LeftArrow, kVK_RightArrow, kVK_UpArrow, kVK_DownArrow,
+                kVK_Home, kVK_End, kVK_PageUp, kVK_PageDown
+            ]
+            guard !correctionKeyCodes.contains(Int(event.keyCode)) else { return }
+
             deps.completionPipeline.keystrokeReceived()
         }
 
