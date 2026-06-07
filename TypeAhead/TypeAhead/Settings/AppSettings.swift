@@ -65,7 +65,7 @@ final class AppSettings {
     init() {
         let d = UserDefaults.standard
         completionsEnabled    = d.object(forKey: Keys.completionsEnabled)    as? Bool   ?? true
-        completionDelay       = d.object(forKey: Keys.completionDelay)       as? Double ?? 0.35
+        completionDelay       = d.object(forKey: Keys.completionDelay)       as? Double ?? 0.18
         completionLength      = CompletionLength(rawValue: d.string(forKey: Keys.completionLength) ?? "") ?? .medium
         activeModelID         = d.string(forKey: Keys.activeModelID) ?? ModelConfig.defaultModel.id
         showInAllApps         = d.object(forKey: Keys.showInAllApps)         as? Bool   ?? true
@@ -77,12 +77,12 @@ final class AppSettings {
         launchAtLogin         = d.object(forKey: Keys.launchAtLogin)         as? Bool   ?? true
         emojiSuggestionsEnabled = d.object(forKey: Keys.emojiSuggestionsEnabled) as? Bool ?? true
 
-        // One-time migration off the old 0.12s default, which fired inference on
-        // every keystroke. 0.35s means suggestions appear only when typing pauses.
-        // (Runs after all stored properties are initialized.)
-        if !d.bool(forKey: "didMigrateDelay_v2") {
-            if completionDelay < 0.25 { completionDelay = 0.35 }
-            d.set(true, forKey: "didMigrateDelay_v2")
+        // The old v2 migration bumped the delay to 0.35s to avoid firing on every
+        // keystroke. The pipeline now has a max-wait throttle, so a short delay is fine
+        // and gives near-continuous suggestions. v3 brings existing users down off 0.35s.
+        if !d.bool(forKey: "didMigrateDelay_v3") {
+            if completionDelay >= 0.25 { completionDelay = 0.18 }
+            d.set(true, forKey: "didMigrateDelay_v3")
         }
     }
 

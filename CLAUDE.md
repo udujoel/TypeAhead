@@ -8,11 +8,14 @@ TypeAhead is a native macOS app that provides system-wide, real-time AI text com
 # Open in Xcode (required for macOS app bundle, entitlements, and AX testing)
 open TypeAhead.xcodeproj
 
-# Or build via SPM for unit tests only
+# Build with Cmd+B (never Cmd+R — debugger becomes AX responsible process, reads fail)
+# Then run: ./run.sh (launches via LaunchServices for correct TCC responsible process)
+
+# Unit tests via SPM (pure logic only; 67 tests)
 swift test
 
-# Type-check
-swift build
+# Full app build (headless, signing disabled for compile-check)
+cd TypeAhead && xcodebuild build -project TypeAhead.xcodeproj -scheme TypeAhead -destination 'platform=macOS' -configuration Debug CODE_SIGNING_ALLOWED=NO
 ```
 
 ## Requirements
@@ -23,13 +26,13 @@ swift build
 
 ## Tech Stack
 - Swift 6, SwiftUI, AppKit (NSPanel, NSStatusItem, NSEvent)
-- MLX Swift (`ml-explore/mlx-swift`) + MLXLLM (`mlx-swift-examples`)
-- swift-transformers (Gemma/Qwen tokenization)
+- MLX: `ml-explore/mlx-swift-lm` 3.31.3 (products MLXLLM, MLXLMCommon); `HFBridge.swift` implements tokenizer protocols (v3 ships no defaults)
+- swift-transformers 0.1.24 (Gemma/Qwen tokenization; one product `Transformers`, import `Hub` directly)
 - SwiftData (typing history, SQLite under the hood)
 - Swift Charts (Statistics view)
 - Sparkle (auto-update)
 - AXUIElement / CGEventTap (system-wide text field access)
-- CGWindowListCreateImage (screenshot context)
+- ScreenCaptureKit (screenshot context)
 
 ## Key Architecture
 ```
@@ -45,13 +48,15 @@ KeyEventMonitor → CompletionPipeline → InferenceEngine
 ```
 
 ## Important Rules
-- No sandbox. Distributed as notarized DMG only (App Store incompatible due to AX APIs).
+- **No sandbox.** `ENABLE_APP_SANDBOX` must be **NO** in pbxproj build settings (Debug & Release). Xcode injects sandbox from build settings, not `.entitlements` file. Sandboxed app cannot do cross-process AX (every read fails `-25204 cannotComplete`).
 - All inference runs on-device. No network calls for completions ever.
 - Never read `kAXPasswordRole` fields — the AX API blocks this by design, do not attempt workarounds.
 - Cancel active inference immediately on any non-Tab keystroke.
 - Per-app exception list (bundle IDs) always takes precedence over global toggle.
-- Model files live in `~/Library/Application Support/TypeAhead/Models/` — never bundle models.
+- Model files download to `~/Library/Caches/models/{repoId}/` via MLXLLM. Never bundle models; never hardcode paths.
 - History DB lives in `~/Library/Application Support/TypeAhead/history.db` — encrypted.
+- **AX responsible process:** Use `./run.sh` to launch (LaunchServices). Never use Cmd+R (debugger becomes responsible process, AX reads fail -25204 even when trusted).
+- **CGEventTap callback:** Return `handleGlobal()`'s value directly; never use `?? passRetained(event)` (coalesces swallow-nil into passthrough). See KeyEventMonitor.swift.
 
 ## Entitlements Required
 - `com.apple.security.automation.apple-events`
