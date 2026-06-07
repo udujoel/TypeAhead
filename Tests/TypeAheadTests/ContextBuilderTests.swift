@@ -139,6 +139,50 @@ import Testing
         #expect(result.contains("hi"))
     }
 
+    // MARK: - Cross-paragraph contamination fix
+
+    @Test func crossParagraphContaminationPreventedWhenCursorAtSentenceEnd() {
+        // Cursor is right after "? " — tail is empty, contamination guard kicks in.
+        // The fix should trim to the last complete sentence only, dropping the prior paragraph.
+        let ctx = TextContext(
+            textBeforeCursor: "I am grateful for the help, support, and love. How are you doing today? ",
+            textAfterCursor: "",
+            appName: "Notes",
+            windowTitle: ""
+        )
+        let result = ContextBuilder.buildPrompt(context: ctx, clipboard: nil, history: [], customInstructions: "")
+        #expect(result.contains("How are you doing today"))
+        #expect(!result.contains("grateful"))
+        #expect(!result.contains("support"))
+    }
+
+    @Test func shortNonEmptyTailKeepsFullContextForModelSignal() {
+        // Tail is "How are you" (11 chars, non-empty but < minTailChars).
+        // Fix does NOT apply — full context is kept so the model can continue the sentence.
+        let ctx = TextContext(
+            textBeforeCursor: "I am grateful for help. How are you",
+            textAfterCursor: "",
+            appName: "Notes",
+            windowTitle: ""
+        )
+        let result = ContextBuilder.buildPrompt(context: ctx, clipboard: nil, history: [], customInstructions: "")
+        #expect(result.contains("grateful"))
+        #expect(result.contains("How are you"))
+    }
+
+    @Test func singleSentenceInWindowKeepsFullContext() {
+        // No prior sentence boundary in the window — nothing to fall back to.
+        // Full prefix is used regardless of tail length.
+        let ctx = TextContext(
+            textBeforeCursor: "Just one sentence here with nothing before it at all",
+            textAfterCursor: "",
+            appName: "Notes",
+            windowTitle: ""
+        )
+        let result = ContextBuilder.buildPrompt(context: ctx, clipboard: nil, history: [], customInstructions: "")
+        #expect(result == "Just one sentence here with nothing before it at all")
+    }
+
     // MARK: - shouldSuppressAtSentenceEnd
 
     @Test func suppressAfterPeriod() {
