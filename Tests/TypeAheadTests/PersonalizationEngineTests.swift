@@ -47,8 +47,10 @@ import Testing
             customInstructions: "",
             examples: ["therefore", "however"]
         )
+        // Examples use bracket/pipe format (not a prose sentence) to avoid model echo.
         #expect(note?.contains("therefore") == true)
         #expect(note?.contains("however") == true)
+        #expect(note?.contains("[style:") == true)
     }
 
     @Test func personaNoteCombinesBothSources() {
@@ -58,6 +60,33 @@ import Testing
         )
         #expect(note?.contains("Medical writer") == true)
         #expect(note?.contains("diagnosis") == true)
+    }
+
+    // MARK: - isUsableExample filtering
+
+    @Test func usableExampleRejectsShortWords() {
+        // All ≤ 4 chars: common accidental accepts from partial-word completion.
+        #expect(!PersonalizationEngine.isUsableExample("to"))
+        #expect(!PersonalizationEngine.isUsableExample("it"))
+        #expect(!PersonalizationEngine.isUsableExample("of"))
+        #expect(!PersonalizationEngine.isUsableExample("ried"))   // 4-char suffix fragment
+        #expect(!PersonalizationEngine.isUsableExample("tion"))   // 4-char suffix fragment
+        #expect(!PersonalizationEngine.isUsableExample("code"))   // 4 chars — filtered (acceptable cost)
+    }
+
+    @Test func usableExampleAcceptsRealWords() {
+        // All ≥ 5 chars — real vocabulary words.
+        #expect(PersonalizationEngine.isUsableExample("SwiftUI"))
+        #expect(PersonalizationEngine.isUsableExample("therefore"))
+        #expect(PersonalizationEngine.isUsableExample("Python"))
+        #expect(PersonalizationEngine.isUsableExample("however"))
+        #expect(PersonalizationEngine.isUsableExample("especially"))
+        #expect(PersonalizationEngine.isUsableExample("design"))   // 6 chars
+    }
+
+    @Test func usableExampleRejectsPureNonLetters() {
+        #expect(!PersonalizationEngine.isUsableExample("12345"))
+        #expect(!PersonalizationEngine.isUsableExample("-----"))
     }
 
     @Test func personaNoteCapsTooLongInstructions() {
