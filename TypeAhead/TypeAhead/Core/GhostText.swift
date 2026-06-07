@@ -51,7 +51,9 @@ enum GhostText {
     }
 
     /// Closing/terminal punctuation that attaches directly to the preceding word (no leading space).
-    private static let closingPunctuation: Set<Character> = ["?", "!", ".", ",", ":", ";", ")", "]", "}", "'", "\""]
+    /// Quotes (' and ") are intentionally excluded: whether a quote opens or closes a phrase is
+    /// context-dependent, and forcing no-space before an opening quote gives "He said"hello" bugs.
+    private static let closingPunctuation: Set<Character> = ["?", "!", ".", ",", ":", ";", ")", "]", "}"]
 
     /// True if `s` starts with a closing/terminal punctuation character.
     private static func startsWithClosingPunctuation(_ s: String) -> Bool {

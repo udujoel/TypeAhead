@@ -119,6 +119,19 @@ import Testing
         // Model outputs "?" without a leading space — also fine (rawBeginsNewWord=false, no space added)
         #expect(GhostText.build(typed: "How are you", raw: "?", isFillInMiddle: true) == "?")
     }
+
+    @Test func openingQuoteGetsLeadingSpace() {
+        // An opening quote begins a new token — it must get a leading space like any new word.
+        // Regression for: quotes in closingPunctuation caused "He said"hello" (missing space).
+        let ghost = GhostText.build(typed: "He said", raw: " \"hello", isFillInMiddle: true)
+        #expect(ghost.hasPrefix(" "))
+    }
+
+    @Test func openingSingleQuoteGetsLeadingSpace() {
+        // Single quote used as an opening quotation mark should also get a leading space.
+        let ghost = GhostText.build(typed: "She replied", raw: " 'yes", isFillInMiddle: true)
+        #expect(ghost.hasPrefix(" "))
+    }
 }
 
 @Suite struct CompletionTextSanitizerTests {
