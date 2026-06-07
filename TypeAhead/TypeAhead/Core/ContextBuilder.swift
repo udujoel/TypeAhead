@@ -30,7 +30,8 @@ enum ContextBuilder {
         context: TextContext,
         clipboard: String?,
         history: [String],
-        customInstructions: String
+        customInstructions: String,
+        screenContext: String? = nil
     ) -> String {
         var prefix = String(context.textBeforeCursor.suffix(maxPrefixChars))
 
@@ -50,6 +51,14 @@ enum ContextBuilder {
             // else: keep the full prefix — the current sentence is too short to stand alone.
         }
 
+        // Prepend a compact screen-context hint so the model understands the user's topic
+        // (e.g. code they're reading, a document they're composing). Capped at 120 chars
+        // so small models aren't distracted by lengthy off-task OCR output.
+        if let screen = screenContext?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !screen.isEmpty {
+            let compact = String(screen.prefix(120))
+            return "[Screen: \(compact)]\n\(prefix)"
+        }
         return prefix
     }
 

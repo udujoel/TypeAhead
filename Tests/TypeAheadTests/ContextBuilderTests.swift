@@ -81,6 +81,45 @@ import Testing
         #expect(!result.contains("PAST-HISTORY"))
     }
 
+    // MARK: - screenContext injection
+
+    @Test func screenContextPrependsHint() {
+        let ctx = TextContext(textBeforeCursor: "The revenue was", textAfterCursor: "", appName: "Numbers", windowTitle: "")
+        let result = ContextBuilder.buildPrompt(
+            context: ctx, clipboard: nil, history: [], customInstructions: "",
+            screenContext: "Q3 Report – Total: $4.2M"
+        )
+        #expect(result.hasPrefix("[Screen: Q3 Report – Total: $4.2M]"))
+        #expect(result.contains("The revenue was"))
+    }
+
+    @Test func screenContextAbsentWhenNil() {
+        let ctx = TextContext(textBeforeCursor: "Hello world", textAfterCursor: "", appName: "Notes", windowTitle: "")
+        let result = ContextBuilder.buildPrompt(context: ctx, clipboard: nil, history: [], customInstructions: "", screenContext: nil)
+        #expect(!result.contains("[Screen:"))
+        #expect(result == "Hello world")
+    }
+
+    @Test func screenContextTruncatedAt120Chars() {
+        let longScreen = String(repeating: "x", count: 200)
+        let ctx = TextContext(textBeforeCursor: "abc", textAfterCursor: "", appName: "Notes", windowTitle: "")
+        let result = ContextBuilder.buildPrompt(
+            context: ctx, clipboard: nil, history: [], customInstructions: "",
+            screenContext: longScreen
+        )
+        // "[Screen: " (9) + 120 x's + "]" (1) = 130 chars in the hint
+        let hintEnd = result.firstIndex(of: "\n") ?? result.endIndex
+        let hint = String(result[..<hintEnd])
+        #expect(hint == "[Screen: \(String(repeating: "x", count: 120))]")
+    }
+
+    @Test func emptyScreenContextBehavesLikeNil() {
+        let ctx = TextContext(textBeforeCursor: "Hello", textAfterCursor: "", appName: "Notes", windowTitle: "")
+        let result = ContextBuilder.buildPrompt(context: ctx, clipboard: nil, history: [], customInstructions: "", screenContext: "  ")
+        #expect(result == "Hello")
+        #expect(!result.contains("[Screen:"))
+    }
+
     // MARK: - buildSuffix (fill-in-middle)
 
     @Test func suffixEmptyAtEndOfText() {

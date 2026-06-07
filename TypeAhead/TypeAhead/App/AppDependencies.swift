@@ -19,6 +19,9 @@ final class AppDependencies {
     }
     let keyMonitor = KeyEventMonitor()
 
+    private var screenContextCache: (text: String, at: Date)?
+    private let screenContextCacheTTL: TimeInterval = 2.0
+
     private func runCompletion() async {
         guard inferenceEngine.isLoaded else { return }
 
@@ -38,11 +41,28 @@ final class AppDependencies {
             source = "buffer"
         }
 
+        // Screen context: OCR the frontmost window to give the model ambient topic signal.
+        // Cache for 2s so rapid keystrokes don't re-capture on every completion.
+        let screenContext: String?
+        if settings.useScreenshotContext {
+            if let cache = screenContextCache, Date().timeIntervalSince(cache.at) < screenContextCacheTTL {
+                screenContext = cache.text
+            } else {
+                let extracted = await ScreenshotContextProvider.captureAndExtractText()
+                screenContext = extracted
+                if let text = extracted { screenContextCache = (text, Date()) }
+            }
+        } else {
+            screenContext = nil
+            screenContextCache = nil
+        }
+
         let prompt = ContextBuilder.buildPrompt(
             context: context,
             clipboard: nil,
             history: [],
-            customInstructions: settings.customInstructions
+            customInstructions: settings.customInstructions,
+            screenContext: screenContext
         )
         // Require a minimum prompt length. A prompt shorter than this doesn't give the
         // model enough signal — it will guess based on common continuations ("and", "the")
