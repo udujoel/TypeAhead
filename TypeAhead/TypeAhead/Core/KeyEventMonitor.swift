@@ -210,6 +210,20 @@ final class KeyEventMonitor {
             return Unmanaged.passRetained(event)
         }
 
+        // Option+Right Arrow — alternate accept key for apps where Tab is consumed (browsers, terminals).
+        // Swallowed and treated as accept only when the overlay is visible; otherwise passes through
+        // as normal macOS word-forward navigation.
+        if keyCode == CGKeyCode(kVK_RightArrow) && event.flags.contains(.maskAlternate) {
+            if isOverlayVisible {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.onTabPressed?()
+                }
+                return nil  // swallowed — app never sees this ⌥→
+            }
+            return Unmanaged.passRetained(event)
+        }
+
         // All other keys — update buffer and trigger completion pipeline
         if let nsEvent = NSEvent(cgEvent: event) {
             keystrokeBuffer.process(nsEvent)
