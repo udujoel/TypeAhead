@@ -281,6 +281,79 @@ appear in logs; per-app override visible in Settings.
 
 ---
 
+## 9. Context contamination — stale cross-paragraph words in suggestions after sentence-end
+
+**Problem.** After completing a sentence (e.g. "How are you doing today?"), the model
+suggests words from the *previous* paragraph rather than the start of a new thought. Observed
+in logs: ghost `support,` appearing after "How are you doing today?" when earlier text
+contained "…help, support, and love…". The suggestion is plausible-looking (real English word)
+but semantically wrong — it completes the old paragraph, not the new sentence the user is
+starting.
+
+**Root cause (confirmed from code + logs).**
+
+`ContextBuilder.buildPrompt()` uses a 160-char rolling window (`maxPrefixChars`). When the
+user finishes a sentence and the caret is right after the punctuation + whitespace:
+1. The regex `[\.!\?\n][\s"')\]]*` finds the boundary and trims to `tail` — everything after
+   the `?`. In this case, tail is only whitespace: 0 content characters.
+2. `tailContent.count >= minTailChars` (25) is **false** → the trim is skipped.
+3. The full 160-char window is used, which includes the **previous paragraph** in addition to
+   the just-completed sentence.
+4. The model pattern-matches on the most recent noun in the 160-char window — "support" from
+   "help, support, and love" — and generates `support,` as continuation.
+
+**Secondary factor.** There is no sentence-end suppression on `main` (that's in unmerged
+PR #9 / `feature/autocomp-research` via `shouldSuppressAtSentenceEnd()`). Even after PR #9
+merges, it only suppresses at the exact `?` + cursor position — it doesn't suppress for the
+first few words of the *next* sentence, where the context window still bleeds across.
+
+**Additional bug spotted during analysis.** The rolling window also strips the trailing space
+(it's past the 160-char window boundary in many cases), so:
+- `typed` ends without whitespace → `!endsWithWhitespace(typed)` is true in `GhostText`
+- Ghost adds a leading space: `" you"` → correct the first time
+- But when continuing a sentence ("How are " → typed window may clip the trailing space),
+  Tab inserts `" you "` into "How are " → result "How are  you" (double space). Not a blocker
+  but a quality regression.
+
+**Proposed fix (two-part).**
+
+Part A — **Sentence-boundary context reset** in `ContextBuilder`:
+- After detecting a sentence boundary (`[.!?]` + optional whitespace) at the very end of the
+  trimmed window, if `tailContent` is empty (user just finished a sentence), instead of
+  keeping the full 160-char window, **reduce the context** to just the last completed sentence
+  (the text between the previous boundary and this one). Concretely: find the second-to-last
+  `[.!?]` boundary and trim there, giving only the most recent sentence as context.
+- Alternatively: if `tail` is all-whitespace (new paragraph), pass an **empty prefix** so the
+  model starts fresh. This is more aggressive but prevents contamination entirely.
+- Guard: only apply when the sentence immediately ended — don't reduce the window once the
+  user has typed ≥ N chars into the new sentence (`minTailChars = 25` already does this for
+  the current boundary; extend to the previous boundary too).
+
+Part B — **Post-sentence suppression window** (extends PR #9's approach):
+- After a `[.!?]` + whitespace sequence, suppress completions until the user has typed at
+  least `minTailChars` characters into the new sentence. This mirrors `shouldSuppressAtSentenceEnd()`
+  but applied in the *forward* direction: suppress for the first ~25 chars, then re-enable.
+- This prevents the model from being asked to complete "H" (just typed "H" after "How are you
+  doing today?") when its context still contains the previous paragraph.
+- Combine with Part A: even when completions resume, the context is already clean.
+
+**Double-space fix (minor, same branch).**
+- In `GhostText.build()`, the leading-space rule fires when `!endsWithWhitespace(typed)`. But
+  "ends with whitespace" should check the **full AX-read text**, not the rolling-window slice.
+  The rolling-window slice may clip the trailing space. Fix: propagate the *original* last
+  character of the AX-read `textBeforeCursor` (before window trimming) to `GhostText`, and
+  use that for the leading-space check rather than the trimmed `typed` prefix.
+
+**Files.** `ContextBuilder.swift` (boundary-reset logic, post-sentence suppression), `GhostText.swift`
+(trailing-space check), `AppDependencies.swift` (pass pre-trim tail char), tests.
+**Effort.** Small–medium. **Risk.** Over-trimming context for short sentences (already guarded
+by `minTailChars`); suppression window may feel like a delay for fast typists. Tune carefully.
+**Acceptance.** After "How are you doing today? ", no ghost from the previous paragraph;
+no double-space on Tab; suggestions resume within ~3 words into the new sentence; existing
+GhostText tests stay green; 3+ new tests for the boundary-reset path.
+
+---
+
 ## Cross-cutting notes
 - Keep everything **on-device** and **no-network for completions** (project rules).
 - Mind the latency targets (P50 < 80ms, P95 < 250ms) when adding prompt context (3, 4, 6).
