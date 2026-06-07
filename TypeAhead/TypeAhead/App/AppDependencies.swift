@@ -44,21 +44,43 @@ final class AppDependencies {
             history: [],
             customInstructions: settings.customInstructions
         )
-        guard prompt.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2 else { return }
+        // Require a minimum prompt length. A prompt shorter than this doesn't give the
+        // model enough signal — it will guess based on common continuations ("and", "the")
+        // rather than the user's actual intent. 8 chars = one meaningful word + space.
+        guard prompt.trimmingCharacters(in: .whitespacesAndNewlines).count >= 8 else { return }
 
         // Fill-in-middle context: only the AX path knows what's after the cursor.
         // The keystroke-buffer fallback has no suffix, so this stays empty there.
         let suffix = ContextBuilder.buildSuffix(context: context)
 
+        // Personalization: build the system instruction note from custom instructions
+        // + frequency-weighted history examples. Gate on `storeInputHistory` so that
+        // disabling the "Collect inputs" toggle makes the history opt-out effective —
+        // no already-recorded words continue to be injected when the user turns it off.
+        let historyExamples: [String]
+        if settings.storeInputHistory {
+            historyExamples = await personalizationEngine.examples(
+                strength: settings.personalizationStrength,
+                limit: 5
+            )
+        } else {
+            historyExamples = []
+        }
+        let personaNote = PersonalizationEngine.buildPersonaNote(
+            customInstructions: settings.customInstructions,
+            examples: historyExamples
+        )
+
         guard let cursorRect = accessibilityManager.cursorScreenRect() else { return }
         let fontSize = accessibilityManager.focusedFontSize()
-        print("⌨️ [\(source)] prompt='\(prompt.suffix(60))' suffix='\(suffix.prefix(40))' cursor=\(cursorRect)")
+        print("⌨️ [\(source)] prompt='\(prompt.suffix(60))' suffix='\(suffix.prefix(40))' persona=\(personaNote != nil) cursor=\(cursorRect)")
 
         inferenceEngine.complete(
             prompt: prompt,
             suffix: suffix,
             maxTokens: settings.completionLength.maxTokens,
-            maxWords: settings.completionLength.maxWords
+            maxWords: settings.completionLength.maxWords,
+            personaNote: personaNote
         ) { [weak self] full in
             // Called on the model executor — hop to main to touch UI.
             Task { @MainActor [weak self] in

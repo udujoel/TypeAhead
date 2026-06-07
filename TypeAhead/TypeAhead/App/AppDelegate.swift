@@ -55,7 +55,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
-            let isMidWordCompletion = !ghost.hasPrefix(" ")
             let leading = ghost.hasPrefix(" ") ? " " : ""
             let body = leading.isEmpty ? ghost : String(ghost.dropFirst())
             let parts = body.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
@@ -65,19 +64,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
+            // In assistant-prefill / FIM mode the model outputs ONLY the suffix tokens
+            // that come AFTER the cursor position. The partial word the user is typing
+            // (e.g. "Wri") is already in the field; the ghost ("ting") is what follows.
+            // Inserting the ghost after the cursor assembles the full word naturally:
+            //   "Wri" + insert("ting ") = "Writing "  ✓
+            // Replacing the partial would destroy it:
+            //   replace("Wri", wordLen=3) with "ting " = "ting "  ✗
+            // So we ALWAYS insert — never replace — regardless of isMidWordCompletion.
+            let injection = leading + firstWord + " "
             if let element = deps.accessibilityManager.focusedElement() {
-                if isMidWordCompletion,
-                   let ctx = deps.accessibilityManager.readTextContext(),
-                   let partial = ContextBuilder.currentWord(context: ctx) {
-                    // Replace the partial word with the completed form + space.
-                    deps.accessibilityManager.replaceCurrentWord(
-                        firstWord + " ", wordLength: partial.count, into: element)
-                } else {
-                    let injection = leading + firstWord + " "
-                    deps.accessibilityManager.insertCompletion(injection, into: element)
-                }
+                deps.accessibilityManager.insertCompletion(injection, into: element)
             } else {
-                let injection = leading + firstWord + " "
                 deps.accessibilityManager.injectText(injection)
             }
 
