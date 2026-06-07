@@ -41,11 +41,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Tab — accept the next word, then KEEP the remaining words showing so another Tab
         // accepts the next one. The suggestion persists (no regeneration) until the user
         // types something that diverges from it.
+        //
+        // Two acceptance modes:
+        // • Word-completion (no leading space in ghost): the ghost completes the partial word
+        //   the user is currently typing — REPLACE the partial word instead of appending.
+        // • New-word (leading space in ghost): append normally with a word separator.
         deps.keyMonitor.onTabPressed = { [weak deps] in
             guard let deps else { return }
             let ghost = deps.completionOverlay.currentText
-            // The ghost may carry a leading space (a new word after a non-space prefix);
-            // preserve it on insert so the word separator isn't lost.
+            guard !ghost.isEmpty else {
+                deps.keyMonitor.isOverlayVisible = false
+                deps.completionOverlay.hide()
+                return
+            }
+
+            let isMidWordCompletion = !ghost.hasPrefix(" ")
             let leading = ghost.hasPrefix(" ") ? " " : ""
             let body = leading.isEmpty ? ghost : String(ghost.dropFirst())
             let parts = body.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
@@ -55,14 +65,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
-            let injection = leading + firstWord + " "
             if let element = deps.accessibilityManager.focusedElement() {
-                deps.accessibilityManager.insertCompletion(injection, into: element)
+                if isMidWordCompletion,
+                   let ctx = deps.accessibilityManager.readTextContext(),
+                   let partial = ContextBuilder.currentWord(context: ctx) {
+                    // Replace the partial word with the completed form + space.
+                    deps.accessibilityManager.replaceCurrentWord(
+                        firstWord + " ", wordLength: partial.count, into: element)
+                } else {
+                    let injection = leading + firstWord + " "
+                    deps.accessibilityManager.insertCompletion(injection, into: element)
+                }
             } else {
+                let injection = leading + firstWord + " "
                 deps.accessibilityManager.injectText(injection)
             }
-            deps.keyMonitor.keystrokeBuffer.appendAccepted(injection)
-            Task { @MainActor in try? deps.historyStore.record(accepted: firstWord, appName: "") }
+
+            let accepted = firstWord
+            deps.keyMonitor.keystrokeBuffer.appendAccepted(accepted + " ")
+            Task { @MainActor in try? deps.historyStore.record(accepted: accepted, appName: "") }
 
             // Keep the rest of the suggestion visible for the next Tab.
             let remaining = parts.count > 1 ? String(parts[1]) : ""

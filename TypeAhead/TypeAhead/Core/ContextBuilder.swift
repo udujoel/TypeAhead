@@ -41,6 +41,24 @@ enum ContextBuilder {
         return prefix
     }
 
+    /// Returns the partial word the user is currently typing (characters after the
+    /// last whitespace before the cursor), or `nil` when the cursor is at a word
+    /// boundary (trailing space or empty). Callers use this to decide between
+    /// completing the current word (no leading space in ghost) vs starting a new one.
+    static func currentWord(context: TextContext) -> String? {
+        let before = context.textBeforeCursor
+        guard let last = before.last, !last.isWhitespace else { return nil }
+        // Walk backwards to find where the current word starts.
+        var idx = before.endIndex
+        while idx > before.startIndex {
+            let prev = before.index(before: idx)
+            if before[prev].isWhitespace { break }
+            idx = prev
+        }
+        let word = String(before[idx...])
+        return word.isEmpty ? nil : word
+    }
+
     /// The text immediately after the cursor, trimmed to the end of the current
     /// sentence/line. Empty when the cursor is at the end of the text (the common
     /// case) — callers treat empty as "use plain continuation, not fill-in-middle".
