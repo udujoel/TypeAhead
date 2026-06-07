@@ -88,6 +88,43 @@ final class AccessibilityManager {
         }
     }
 
+    /// Replaces the partial word currently before the cursor with `replacement`.
+    /// `wordLength` is the number of characters to remove backwards from the cursor
+    /// (the length of the partial word). Falls back to backspace-then-inject when the
+    /// range AX API is unavailable (e.g. in some Electron apps).
+    func replaceCurrentWord(_ replacement: String, wordLength: Int, into element: AXUIElement) {
+        guard wordLength > 0 else {
+            insertCompletion(replacement, into: element)
+            return
+        }
+        // Select the partial word by moving the selection backwards.
+        if let current = element.selectedRange {
+            let replaceStart = max(0, current.location - wordLength)
+            let replaceRange = NSRange(location: replaceStart, length: wordLength)
+            var cfRange = CFRange(location: replaceRange.location, length: replaceRange.length)
+            if let axRange = AXValueCreate(.cfRange, &cfRange) {
+                let selectResult = AXUIElementSetAttributeValue(
+                    element, kAXSelectedTextRangeAttribute as CFString, axRange)
+                if selectResult == .success {
+                    // Now insert replaces the selection.
+                    insertCompletion(replacement, into: element)
+                    return
+                }
+            }
+        }
+        // Fallback: synthetic backspaces then inject.
+        guard let source = CGEventSource(stateID: .combinedSessionState) else { return }
+        for _ in 0 ..< wordLength {
+            let down = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: true) // backspace
+            down?.setIntegerValueField(.eventSourceUserData, value: AccessibilityManager.injectedEventMarker)
+            down?.post(tap: .cgAnnotatedSessionEventTap)
+            let up = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: false)
+            up?.setIntegerValueField(.eventSourceUserData, value: AccessibilityManager.injectedEventMarker)
+            up?.post(tap: .cgAnnotatedSessionEventTap)
+        }
+        injectText(replacement)
+    }
+
     func focusedElement() -> AXUIElement? {
         focusedTextElement()
     }
