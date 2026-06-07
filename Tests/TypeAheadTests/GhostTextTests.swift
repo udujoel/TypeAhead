@@ -97,6 +97,41 @@ import Testing
         // Prefix already ends with a space → don't double it.
         #expect(GhostText.build(typed: "working for ", raw: " you", isFillInMiddle: true) == "you")
     }
+
+    // MARK: - Punctuation spacing
+
+    @Test func closingPunctuationGetsNoLeadingSpace() {
+        // "How are you" + model " ?" → show "?" (no space), giving "How are you?"
+        #expect(GhostText.build(typed: "How are you", raw: " ?", isFillInMiddle: true) == "?")
+    }
+
+    @Test func exclamationGetsNoLeadingSpace() {
+        // "What a day" + model " !" → "!" not " !"
+        #expect(GhostText.build(typed: "What a day", raw: " !", isFillInMiddle: true) == "!")
+    }
+
+    @Test func closingParenGetsNoLeadingSpace() {
+        // "(note about this" + model " )" → ")" attaches directly
+        #expect(GhostText.build(typed: "(note about this", raw: " )", isFillInMiddle: true) == ")")
+    }
+
+    @Test func questionMarkWithoutLeadingSpaceInRaw() {
+        // Model outputs "?" without a leading space — also fine (rawBeginsNewWord=false, no space added)
+        #expect(GhostText.build(typed: "How are you", raw: "?", isFillInMiddle: true) == "?")
+    }
+
+    @Test func openingQuoteGetsLeadingSpace() {
+        // An opening quote begins a new token — it must get a leading space like any new word.
+        // Regression for: quotes in closingPunctuation caused "He said"hello" (missing space).
+        let ghost = GhostText.build(typed: "He said", raw: " \"hello", isFillInMiddle: true)
+        #expect(ghost.hasPrefix(" "))
+    }
+
+    @Test func openingSingleQuoteGetsLeadingSpace() {
+        // Single quote used as an opening quotation mark should also get a leading space.
+        let ghost = GhostText.build(typed: "She replied", raw: " 'yes", isFillInMiddle: true)
+        #expect(ghost.hasPrefix(" "))
+    }
 }
 
 @Suite struct CompletionTextSanitizerTests {
@@ -155,9 +190,20 @@ import Testing
     }
 
     @Test func rejectsPurePunctuation() {
-        // A standalone comma or ellipsis with no letters is not useful.
+        // Commas, ellipses, and other mid-sentence punctuation without letters are not useful.
         #expect(!GhostText.isUsableGhost(","))
         #expect(!GhostText.isUsableGhost("..."))
+        #expect(!GhostText.isUsableGhost(":"))
+        #expect(!GhostText.isUsableGhost("--"))
+    }
+
+    @Test func allowsStandaloneTerminalPunctuation() {
+        // ?, !, ), ], } are useful on their own — the model suggests them to close a sentence/bracket.
+        #expect(GhostText.isUsableGhost("?"))
+        #expect(GhostText.isUsableGhost("!"))
+        #expect(GhostText.isUsableGhost(")"))
+        #expect(GhostText.isUsableGhost("]"))
+        #expect(GhostText.isUsableGhost("}"))
     }
 
     @Test func allowsPunctuationFollowedByWord() {
