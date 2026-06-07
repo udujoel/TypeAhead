@@ -51,12 +51,18 @@ final class AppDependencies {
         let suffix = ContextBuilder.buildSuffix(context: context)
 
         // Personalization: build the system instruction note from custom instructions
-        // + frequency-weighted history examples. Fetched fresh each completion so the
-        // model adapts as new words are accepted — the cost is a SwiftData fetch (~0ms).
-        let historyExamples = await personalizationEngine.examples(
-            strength: settings.personalizationStrength,
-            limit: 5
-        )
+        // + frequency-weighted history examples. Gate on `storeInputHistory` so that
+        // disabling the "Collect inputs" toggle makes the history opt-out effective —
+        // no already-recorded words continue to be injected when the user turns it off.
+        let historyExamples: [String]
+        if settings.storeInputHistory {
+            historyExamples = await personalizationEngine.examples(
+                strength: settings.personalizationStrength,
+                limit: 5
+            )
+        } else {
+            historyExamples = []
+        }
         let personaNote = PersonalizationEngine.buildPersonaNote(
             customInstructions: settings.customInstructions,
             examples: historyExamples

@@ -40,11 +40,35 @@ import SwiftData
 
     @Test func frequentPhrasesDeduplicatesCase() async throws {
         let store = await HistoryStore(inMemory: true)
-        // Same word, different cases — should merge to one entry.
+        // Same word, different cases — should merge to one entry that keeps canonical casing.
+        // Record "Hello" first, then "hello" more recently — most-recent wins the canonical.
         try await store.record(accepted: "Hello", appName: "Notes")
         try await store.record(accepted: "hello", appName: "Notes")
         let phrases = await store.frequentAcceptedPhrases(limit: 5)
         #expect(phrases.count == 1)
+        // Most-recently accepted form ("hello") should be preserved, not the lowercased key.
+        #expect(phrases.first == "hello")
+    }
+
+    @Test func frequentPhrasesPreservesCanonicalCasing() async throws {
+        let store = await HistoryStore(inMemory: true)
+        // SwiftUI accepted 3 times — canonical casing must survive, not be lowercased.
+        for _ in 0..<3 { try await store.record(accepted: "SwiftUI", appName: "Notes") }
+        let phrases = await store.frequentAcceptedPhrases(limit: 1)
+        #expect(phrases.first == "SwiftUI")
+    }
+
+    @Test func recordCountReturnsZeroWhenEmpty() async {
+        let store = await HistoryStore(inMemory: true)
+        let count = await store.recordCount()
+        #expect(count == 0)
+    }
+
+    @Test func recordCountMatchesInsertions() async throws {
+        let store = await HistoryStore(inMemory: true)
+        for i in 0..<5 { try await store.record(accepted: "word\(i)", appName: "Notes") }
+        let count = await store.recordCount()
+        #expect(count == 5)
     }
 
     @Test func frequentPhrasesReturnsEmptyWhenNoHistory() async {
