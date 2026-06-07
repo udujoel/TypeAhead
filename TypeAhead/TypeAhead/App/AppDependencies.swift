@@ -63,6 +63,10 @@ final class AppDependencies {
         // 1-2 characters. 8 chars = one meaningful word + space.
         guard context.textBeforeCursor.trimmingCharacters(in: .whitespacesAndNewlines).count >= 8 else { return }
 
+        // Suppress immediately after a sentence terminator (. ! ?). The model has no useful
+        // signal for the next clause until the user starts typing it.
+        guard !ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: context.textBeforeCursor) else { return }
+
         let prompt = ContextBuilder.buildPrompt(
             context: context,
             clipboard: nil,

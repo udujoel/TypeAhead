@@ -139,6 +139,45 @@ import Testing
         #expect(result.contains("hi"))
     }
 
+    // MARK: - shouldSuppressAtSentenceEnd
+
+    @Test func suppressAfterPeriod() {
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "I went home.") == true)
+    }
+
+    @Test func suppressAfterExclamation() {
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "Great work!") == true)
+    }
+
+    @Test func suppressAfterQuestion() {
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "How are you?") == true)
+    }
+
+    @Test func suppressAfterFullWidthTerminators() {
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "完了。") == true)
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "本当？") == true)
+    }
+
+    @Test func suppressSkipsClosingPunct() {
+        // Straight double quote after a period.
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "He said \"done.\"") == true)
+        // macOS Smart Quotes curly double (U+201D) — the common case when Smart Quotes is on.
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "He said \u{201C}done.\u{201D}") == true)
+        // Closing paren after exclamation.
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "Well done!)") == true)
+    }
+
+    @Test func noSuppressInMiddleOfSentence() {
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "I went home. Then") == false)
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "Hello world") == false)
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "I love cod") == false)
+    }
+
+    @Test func noSuppressForEmptyInput() {
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "") == false)
+        #expect(ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: "   ") == false)
+    }
+
     // MARK: - buildSuffix (fill-in-middle)
 
     @Test func suffixEmptyAtEndOfText() {
