@@ -61,6 +61,13 @@ final class AppSettings {
     var emojiSuggestionsEnabled: Bool {
         didSet { UserDefaults.standard.set(emojiSuggestionsEnabled, forKey: Keys.emojiSuggestionsEnabled) }
     }
+    var exceptionList: AppExceptionList {
+        didSet {
+            if let data = try? JSONEncoder().encode(exceptionList) {
+                UserDefaults.standard.set(data, forKey: Keys.exceptionList)
+            }
+        }
+    }
 
     init() {
         let d = UserDefaults.standard
@@ -76,6 +83,12 @@ final class AppSettings {
         useClipboardContext   = d.object(forKey: Keys.useClipboardContext)   as? Bool   ?? true
         launchAtLogin         = d.object(forKey: Keys.launchAtLogin)         as? Bool   ?? true
         emojiSuggestionsEnabled = d.object(forKey: Keys.emojiSuggestionsEnabled) as? Bool ?? true
+        if let data = d.data(forKey: Keys.exceptionList),
+           let decoded = try? JSONDecoder().decode(AppExceptionList.self, from: data) {
+            exceptionList = decoded
+        } else {
+            exceptionList = .defaults
+        }
 
         // The old v2 migration bumped the delay to 0.35s to avoid firing on every
         // keystroke. The pipeline now has a max-wait throttle, so a short delay is fine
@@ -99,5 +112,6 @@ final class AppSettings {
         static let useClipboardContext    = "useClipboardContext"
         static let launchAtLogin          = "launchAtLogin"
         static let emojiSuggestionsEnabled = "emojiSuggestionsEnabled"
+        static let exceptionList            = "exceptionList"
     }
 }

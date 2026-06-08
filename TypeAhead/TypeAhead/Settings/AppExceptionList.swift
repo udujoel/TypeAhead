@@ -1,6 +1,6 @@
 import Foundation
 
-struct AppExceptionList: Sendable {
+struct AppExceptionList: Sendable, Codable {
     private var excludedBundleIDs: Set<String>
 
     init(bundleIDs: Set<String> = []) {

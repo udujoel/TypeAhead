@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import TypeAhead
 
@@ -35,5 +36,35 @@ import Testing
         let list = AppExceptionList.defaults
         #expect(list.isExcluded(bundleID: "com.agilebits.onepassword7"))
         #expect(list.isExcluded(bundleID: "desktop.Bitwarden"))
+    }
+
+    @Test func defaultExclusionListContainsDeveloperTools() {
+        let list = AppExceptionList.defaults
+        #expect(list.isExcluded(bundleID: "com.apple.Terminal"))
+        #expect(list.isExcluded(bundleID: "com.microsoft.VSCode"))
+        #expect(list.isExcluded(bundleID: "com.apple.dt.Xcode"))
+        #expect(list.isExcluded(bundleID: "com.googlecode.iterm2"))
+    }
+
+    @Test func exceptionListIsNotExcludedForUnknownApp() {
+        let list = AppExceptionList.defaults
+        #expect(!list.isExcluded(bundleID: "com.apple.TextEdit"))
+        #expect(!list.isExcluded(bundleID: "com.example.unknown"))
+    }
+
+    @Test func exceptionListCodableRoundTrip() throws {
+        var list = AppExceptionList.defaults
+        list.add(bundleID: "com.custom.app")
+        let data = try JSONEncoder().encode(list)
+        let decoded = try JSONDecoder().decode(AppExceptionList.self, from: data)
+        #expect(decoded.isExcluded(bundleID: "com.agilebits.onepassword7"))
+        #expect(decoded.isExcluded(bundleID: "com.custom.app"))
+        #expect(!decoded.isExcluded(bundleID: "com.apple.TextEdit"))
+    }
+
+    @Test func settingsExceptionListStartsFromDefaults() {
+        let settings = AppSettings()
+        #expect(settings.exceptionList.isExcluded(bundleID: "com.apple.Terminal"))
+        #expect(!settings.exceptionList.isExcluded(bundleID: "com.apple.TextEdit"))
     }
 }
