@@ -8,6 +8,12 @@ import Vision
 @MainActor
 final class CaretLocator {
 
+    /// Captures the focused-window image. Injected (not a direct `ScreenshotContextProvider`
+    /// call) so this type depends only on AppKit+Vision and compiles in the SPM test target;
+    /// the ScreenCaptureKit capture is wired from the app side. nil → Vision disabled, callers
+    /// fall back to the pinned bar.
+    var captureWindow: (() async -> NSImage?)?
+
     /// Cached caret anchor for the current focused window + the time it was computed.
     private(set) var cachedAnchor: NSRect?
     private var lastComputed: Date = .distantPast
@@ -21,15 +27,16 @@ final class CaretLocator {
     }
 
     /// Kicks off a throttled background capture+OCR that updates `cachedAnchor`. Safe to call on
-    /// every keystroke — it no-ops while one is in flight or within the TTL.
+    /// every keystroke — it no-ops while one is in flight, within the TTL, or with no capture.
     func refresh(trailingText: String, windowFrame: NSRect, now: Date = Date()) {
+        guard let captureWindow else { return }
         guard !inFlight, now.timeIntervalSince(lastComputed) >= ttl else { return }
         guard trailingText.count >= 3 else { return }
         inFlight = true
         let trailing = trailingText
         Task { @MainActor in
             defer { self.inFlight = false; self.lastComputed = Date() }
-            guard let image = await ScreenshotContextProvider.captureActiveWindow(),
+            guard let image = await captureWindow(),
                   let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
                 self.cachedAnchor = nil
                 return

@@ -13,6 +13,16 @@ final class AccessibilityManager {
     /// Apps we've already asked to enable their accessibility tree (Chromium/Electron).
     private var coaxedPIDs = Set<pid_t>()
 
+    /// Vision-based caret locator for apps with unreliable AX caret bounds.
+    private let caretLocator = CaretLocator()
+
+    /// Wires the focused-window capture used by Vision caret detection. Called once from the
+    /// app side (`AppDependencies`) so the ScreenCaptureKit dependency stays out of the test
+    /// target. Until called, unreliable-app placement uses the pinned bar only.
+    func enableVisionCapture(_ capture: @escaping () async -> NSImage?) {
+        caretLocator.captureWindow = capture
+    }
+
     /// Whether this process currently holds Accessibility permission. If false, all AX
     /// reads fail and we fall back to the keystroke buffer + mouse position. Rebuilding
     /// in Xcode changes the binary and silently revokes this, so it must be re-granted.
@@ -182,24 +192,38 @@ final class AccessibilityManager {
     }
 
     func cursorScreenRect() -> NSRect? {
-        if let element = focusedTextElement(), let axRect = axCursorRect(for: element),
+        let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        let unreliable = AppInsertionPolicy.unreliableCaretBounds(forBundleID: bundleID)
+
+        if !unreliable, let element = focusedTextElement(), let axRect = axCursorRect(for: element),
            axRect.origin.x.isFinite, axRect.origin.y.isFinite,
            axRect.height > 0, axRect.width < 100_000, axRect.height < 100_000 {
-            // AX/Quartz coords are global, TOP-left origin (Y down). Flip to Cocoa global
-            // (BOTTOM-left, Y up) around the menu-bar screen's height (screens[0]).
+            // Reliable app: AX/Quartz coords are global, TOP-left origin (Y down). Flip to Cocoa
+            // global (BOTTOM-left, Y up) around the menu-bar screen's height (screens[0]).
             let menuBarHeight = NSScreen.screens.first?.frame.maxY ?? NSScreen.main?.frame.maxY ?? 0
             let flippedY = menuBarHeight - axRect.maxY
             let cocoaRect = NSRect(x: axRect.origin.x, y: flippedY, width: axRect.width, height: axRect.height)
-            // Electron/Chromium fields (Teams, Slack, Claude desktop) sometimes answer on the
-            // AX path but report caret bounds that map OFF every screen (e.g. -2427,-139). The
-            // overlay would faithfully render off-screen. Trust the rect only when it actually
-            // lands on a screen; otherwise fall through to the mouse-anchored last resort.
             if OverlayPositioner.isOnScreen(cocoaRect, screenFrames: NSScreen.screens.map(\.frame)) {
                 return cocoaRect
             }
         }
-        // AX unavailable or caret off-screen — position overlay near the mouse cursor
-        // (already Cocoa coords). Keeps the ghost on-screen near where the user is working.
+
+        if unreliable, let windowFrame = focusedWindowScreenFrame() {
+            // Schedule a throttled Vision pass to refine the anchor for subsequent keystrokes.
+            if let element = focusedTextElement(), let value = element.stringValue {
+                let trailing = String(value.suffix(40))
+                caretLocator.refresh(trailingText: trailing, windowFrame: windowFrame)
+            }
+            // Use a fresh Vision anchor if we have one; otherwise the pinned-bar floor.
+            if let anchor = caretLocator.freshAnchor(),
+               OverlayPositioner.isOnScreen(anchor, screenFrames: NSScreen.screens.map(\.frame)) {
+                return anchor
+            }
+            let pinned = OverlayPositioner.pinnedOrigin(windowFrame: windowFrame, panelSize: NSSize(width: 1, height: 20))
+            return NSRect(origin: pinned, size: NSSize(width: 0, height: 20))
+        }
+
+        // AX unavailable / no window frame — anchor near the mouse cursor (Cocoa coords).
         let mouse = NSEvent.mouseLocation
         return NSRect(x: mouse.x, y: mouse.y - 24, width: 0, height: 20)
     }

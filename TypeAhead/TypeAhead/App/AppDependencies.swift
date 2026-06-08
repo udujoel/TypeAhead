@@ -19,6 +19,12 @@ final class AppDependencies {
     }
     let keyMonitor = KeyEventMonitor()
 
+    init() {
+        // Wire on-device Vision caret detection for Electron/Chromium apps with unreliable AX
+        // caret bounds. Capture lives here so the ScreenCaptureKit dependency stays app-only.
+        accessibilityManager.enableVisionCapture { await ScreenshotContextProvider.captureActiveWindow() }
+    }
+
     private var screenContextCache: (text: String, at: Date)?
     private let screenContextCacheTTL: TimeInterval = 2.0
 
