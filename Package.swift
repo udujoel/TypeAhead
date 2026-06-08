@@ -29,6 +29,8 @@ let package = Package(
                 "UI/StatusBar/StatusBarMenu.swift",
                 // Requires ScreenSaver framework
                 "Context/ScreenshotContextProvider.swift",
+                // Requires Vision + ScreenCaptureKit capture — built in Xcode only
+                "Caret/CaretLocator.swift",
                 // Requires SwiftUI + AppKit combo that needs the full app bundle
                 "TypeAheadApp.swift",
                 "UI/Settings",
