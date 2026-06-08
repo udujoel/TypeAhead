@@ -83,7 +83,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let element = deps.accessibilityManager.focusedElement() {
                     deps.accessibilityManager.replaceCurrentWord(ghost, wordLength: len, into: element)
                 } else {
-                    deps.accessibilityManager.injectText(ghost)
+                    // AX element unavailable — backspace the `:shortcode` then inject the emoji.
+                    deps.accessibilityManager.injectReplacement(ghost, deletingCount: len)
                 }
                 deps.keyMonitor.isOverlayVisible = false
                 deps.completionOverlay.hide()
