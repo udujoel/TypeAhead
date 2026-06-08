@@ -19,13 +19,16 @@ enum GhostText {
         guard !cleaned.isEmpty else { return "" }
 
         var continuation: String
+        var didStrip = false
         if isFillInMiddle {
             // The output is the continuation. Keep only the current line — the model
             // often runs on into new sentences/lines we don't want inline.
             let firstLine = cleaned.prefix { $0 != "\n" }
             continuation = normalizeWhitespace(String(firstLine))
             // Guard against the model restating the partial current word (→ "woworking").
+            let beforeStrip = continuation
             continuation = stripCurrentWordRestatement(typed: typed, continuation: continuation)
+            didStrip = continuation != beforeStrip
         } else {
             continuation = alignedContinuation(typed: typed, output: cleaned)
         }
@@ -41,8 +44,11 @@ enum GhostText {
         // the model continues the current word ("wor" + "king"), no space is added.
         // Exception: closing/terminal punctuation attaches directly without a leading space
         // ("How are you" + "?" should give "?" not " ?").
-        if !continuation.isEmpty, isFillInMiddle, rawBeginsNewWord(raw), !endsWithWhitespace(typed),
-           !startsWithClosingPunctuation(continuation) {
+        // Exception: when stripCurrentWordRestatement stripped a restatement, the continuation
+        // is a word suffix (not a new word) — the leading-space check must not fire even if the
+        // original raw happened to start with whitespace.
+        if !continuation.isEmpty, isFillInMiddle, !didStrip, rawBeginsNewWord(raw),
+           !endsWithWhitespace(typed), !startsWithClosingPunctuation(continuation) {
             continuation = " " + continuation
         }
 

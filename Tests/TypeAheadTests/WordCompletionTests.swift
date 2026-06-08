@@ -99,4 +99,14 @@ import Testing
         #expect(GhostText.currentPartialWord("The tab to accept is wo") == "wo")
         #expect(GhostText.currentPartialWord("done ") == "")
     }
+
+    /// Regression: raw starts with a space (new-word model output) but stripCurrentWordRestatement
+    /// strips the leading word — the leading-space check must not fire when a strip occurred.
+    /// Before the fix: " working" raw + "wo" partial → "rking" stripped → rawBeginsNewWord fires
+    /// → " rking" (wrong). After fix: " rking" must NOT appear; result must be plain "rking".
+    @Test func fimNoSpacePrependedWhenStripOccurred() {
+        let ghost = GhostText.build(typed: "The tab to accept is wo", raw: " working", isFillInMiddle: true)
+        #expect(ghost == "rking", "strip occurred — leading-space check must be skipped")
+        #expect(!ghost.hasPrefix(" "), "should never have a leading space after a word-restatement strip")
+    }
 }
