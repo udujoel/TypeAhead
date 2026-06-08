@@ -214,8 +214,8 @@ final class AccessibilityManager {
                 let trailing = String(value.suffix(40))
                 caretLocator.refresh(trailingText: trailing, windowFrame: windowFrame)
             }
-            // Use a fresh Vision anchor if we have one; otherwise the pinned-bar floor.
-            if let anchor = caretLocator.freshAnchor(),
+            // Use a fresh Vision anchor for THIS window if we have one; otherwise the pinned bar.
+            if let anchor = caretLocator.freshAnchor(forWindow: windowFrame),
                OverlayPositioner.isOnScreen(anchor, screenFrames: NSScreen.screens.map(\.frame)) {
                 return anchor
             }

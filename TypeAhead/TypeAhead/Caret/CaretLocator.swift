@@ -14,15 +14,26 @@ final class CaretLocator {
     /// fall back to the pinned bar.
     var captureWindow: (() async -> NSImage?)?
 
-    /// Cached caret anchor for the current focused window + the time it was computed.
+    /// Cached caret anchor + the window frame and time it was computed for.
     private(set) var cachedAnchor: NSRect?
+    private var cachedWindow: NSRect?
     private var lastComputed: Date = .distantPast
     private var inFlight = false
     private let ttl: TimeInterval = 1.0
 
-    /// A fresh cached anchor if one was computed within the TTL, else nil.
-    func freshAnchor(now: Date = Date()) -> NSRect? {
-        guard let anchor = cachedAnchor, now.timeIntervalSince(lastComputed) < ttl else { return nil }
+    /// Pure freshness rule: the cached anchor is usable only for the SAME window and within the
+    /// TTL. Extracted for unit testing. A window-identity check prevents a stale anchor from the
+    /// previous window showing after an Alt-Tab inside the TTL.
+    nonisolated static func isAnchorFresh(cachedAt: Date, cachedWindow: NSRect, requestWindow: NSRect,
+                                          now: Date, ttl: TimeInterval) -> Bool {
+        now.timeIntervalSince(cachedAt) < ttl && cachedWindow == requestWindow
+    }
+
+    /// A fresh cached anchor for `windowFrame` (same window, within TTL), else nil.
+    func freshAnchor(forWindow windowFrame: NSRect, now: Date = Date()) -> NSRect? {
+        guard let anchor = cachedAnchor, let cachedWindow,
+              Self.isAnchorFresh(cachedAt: lastComputed, cachedWindow: cachedWindow,
+                                 requestWindow: windowFrame, now: now, ttl: ttl) else { return nil }
         return anchor
     }
 
@@ -39,29 +50,30 @@ final class CaretLocator {
             guard let image = await captureWindow(),
                   let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
                 self.cachedAnchor = nil
+                self.cachedWindow = nil
                 return
             }
-            let observations = await Self.recognizeText(in: cg)
+            // OCR off the main thread; synchronous pattern (read request.results directly — no
+            // continuation that could dangle if `perform` throws). Mirrors ScreenshotContextProvider.
+            let observations = await Task.detached(priority: .userInitiated) {
+                Self.recognizeText(in: cg)
+            }.value
             self.cachedAnchor = CaretGeometry.bestMatch(
                 trailingText: trailing, observations: observations, in: windowFrame)
+            self.cachedWindow = windowFrame
         }
     }
 
     /// Runs Vision text recognition and adapts results into `CaretGeometry.Observation`s.
-    private static func recognizeText(in image: CGImage) async -> [CaretGeometry.Observation] {
-        await withCheckedContinuation { continuation in
-            let request = VNRecognizeTextRequest { request, _ in
-                let results = (request.results as? [VNRecognizedTextObservation]) ?? []
-                let observations: [CaretGeometry.Observation] = results.compactMap { obs in
-                    guard let top = obs.topCandidates(1).first else { return nil }
-                    return CaretGeometry.Observation(text: top.string, box: obs.boundingBox)
-                }
-                continuation.resume(returning: observations)
-            }
-            request.recognitionLevel = .fast
-            request.usesLanguageCorrection = false
-            let handler = VNImageRequestHandler(cgImage: image, options: [:])
-            try? handler.perform([request])
+    nonisolated private static func recognizeText(in image: CGImage) -> [CaretGeometry.Observation] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .fast
+        request.usesLanguageCorrection = false
+        let handler = VNImageRequestHandler(cgImage: image)
+        try? handler.perform([request])
+        return (request.results ?? []).compactMap { obs in
+            guard let top = obs.topCandidates(1).first else { return nil }
+            return CaretGeometry.Observation(text: top.string, box: obs.boundingBox)
         }
     }
 }
