@@ -56,6 +56,19 @@ final class AccessibilityManager {
         return (String(text[..<idx]), String(text[idx...]))
     }
 
+    /// Whether an AX write that returned `.success` actually did nothing (the silent no-op
+    /// Electron/Chromium fields exhibit). Only decidable for **pure insertions** — an empty
+    /// selection makes a real write strictly grow the field, so `after <= before` means it was
+    /// ignored. With a non-empty selection the write REPLACES it and the field may legitimately
+    /// shrink or stay equal (`:wave`→👋, `colour`→`color `), so length cannot distinguish a
+    /// success from a no-op; we trust the result and never fall back (avoids double-injection).
+    /// Returns false when either length is unreadable — trust `.success` rather than risk a
+    /// second insertion.
+    nonisolated static func isSilentNoOp(selectionLength: Int, lengthBefore: Int?, lengthAfter: Int?) -> Bool {
+        guard selectionLength == 0, let before = lengthBefore, let after = lengthAfter else { return false }
+        return after <= before
+    }
+
     // MARK: - AX Live API
 
     private var didProbeAX = false
@@ -87,10 +100,13 @@ final class AccessibilityManager {
             injectText(text)
             return
         }
-        // Snapshot the field length before the write. Electron/Chromium fields return
+        // Snapshot field + selection state before the write. Electron/Chromium fields return
         // .success from AXUIElementSetAttributeValue but never apply the insertion — Tab
         // appears to accept (the ghost advances) while nothing lands. Checking the error
-        // code alone misses this; we must verify the field actually changed.
+        // code alone misses this; we verify the field actually changed. The selection length
+        // matters: with a selection the write REPLACES it, so the field can legitimately not
+        // grow — length-based verification only holds for a pure insertion (empty selection).
+        let selectionLength = element.selectedRange?.length ?? 0
         let lengthBefore = element.stringValue?.count
         let result = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString)
         if result != .success {
@@ -98,10 +114,7 @@ final class AccessibilityManager {
             injectText(text)
             return
         }
-        // Verify the write landed. Only treat it as a silent no-op when we can positively
-        // read the length both before AND after and it did not grow — if the value is
-        // unreadable we trust the .success rather than risk a double insertion.
-        if let before = lengthBefore, let after = element.stringValue?.count, after <= before {
+        if Self.isSilentNoOp(selectionLength: selectionLength, lengthBefore: lengthBefore, lengthAfter: element.stringValue?.count) {
             print("⚠️ AX insertCompletion reported success but field unchanged — CGEvent fallback")
             injectText(text)
         }
