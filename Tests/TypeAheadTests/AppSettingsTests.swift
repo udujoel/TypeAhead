@@ -67,4 +67,34 @@ import Testing
         #expect(settings.exceptionList.isExcluded(bundleID: "com.apple.Terminal"))
         #expect(!settings.exceptionList.isExcluded(bundleID: "com.apple.TextEdit"))
     }
+
+    @Test func bundleIDsReturnsEmptyForEmptyList() {
+        let list = AppExceptionList()
+        #expect(list.bundleIDs.isEmpty)
+    }
+
+    @Test func bundleIDsReturnsSortedList() {
+        var list = AppExceptionList()
+        list.add(bundleID: "com.z.app")
+        list.add(bundleID: "com.a.app")
+        list.add(bundleID: "com.m.app")
+        #expect(list.bundleIDs == ["com.a.app", "com.m.app", "com.z.app"])
+    }
+
+    @Test func bundleIDsReflectsRemoval() {
+        var list = AppExceptionList()
+        list.add(bundleID: "com.example.one")
+        list.add(bundleID: "com.example.two")
+        list.remove(bundleID: "com.example.one")
+        #expect(list.bundleIDs == ["com.example.two"])
+    }
+
+    @Test func bundleIDsDefaultsContainsKnownEntries() {
+        let list = AppExceptionList.defaults
+        let ids = list.bundleIDs
+        #expect(ids.contains("com.apple.Terminal"))
+        #expect(ids.contains("com.microsoft.VSCode"))
+        #expect(ids.contains("com.agilebits.onepassword7"))
+        #expect(ids == ids.sorted())
+    }
 }

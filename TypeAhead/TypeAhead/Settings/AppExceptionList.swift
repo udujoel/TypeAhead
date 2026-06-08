@@ -19,6 +19,8 @@ struct AppExceptionList: Sendable, Codable {
         excludedBundleIDs.contains(bundleID)
     }
 
+    var bundleIDs: [String] { excludedBundleIDs.sorted() }
+
     static let defaults = AppExceptionList(bundleIDs: [
         "com.agilebits.onepassword7",
         "com.agilebits.onepassword-osx",
