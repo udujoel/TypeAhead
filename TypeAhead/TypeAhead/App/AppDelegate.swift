@@ -86,6 +86,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // AX element unavailable — backspace the `:shortcode` then inject the emoji.
                     deps.accessibilityManager.injectReplacement(ghost, deletingCount: len)
                 }
+                // Keep buffer in sync so buffer-fallback mode doesn't re-detect the stale :shortcode.
+                deps.keyMonitor.keystrokeBuffer.replaceTrailing(count: len, with: ghost)
                 deps.keyMonitor.isOverlayVisible = false
                 deps.completionOverlay.hide()
                 deps.completionPipeline.keystrokeReceived()

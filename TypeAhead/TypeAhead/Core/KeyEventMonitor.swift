@@ -46,6 +46,16 @@ final class KeystrokeBuffer {
         if text.count > capacity { text = String(text.suffix(capacity)) }
     }
 
+    /// Replace the last `count` characters with `replacement` (e.g. after emoji or spell-correction acceptance).
+    func replaceTrailing(count: Int, with replacement: String) {
+        if count > 0 && text.count >= count {
+            text = String(text.dropLast(count)) + replacement
+        } else {
+            text = replacement
+        }
+        if text.count > capacity { text = String(text.suffix(capacity)) }
+    }
+
     func clear() { text = "" }
 }
 
