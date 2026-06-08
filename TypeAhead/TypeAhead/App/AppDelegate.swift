@@ -76,6 +76,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
+            // Emoji replacement: swap the `:shortcode` text with the emoji.
+            if deps.emojiReplacementLength > 0 {
+                let len = deps.emojiReplacementLength
+                deps.emojiReplacementLength = 0
+                if let element = deps.accessibilityManager.focusedElement() {
+                    deps.accessibilityManager.replaceCurrentWord(ghost, wordLength: len, into: element)
+                } else {
+                    deps.accessibilityManager.injectText(ghost)
+                }
+                deps.keyMonitor.isOverlayVisible = false
+                deps.completionOverlay.hide()
+                deps.completionPipeline.keystrokeReceived()
+                return
+            }
+
             let leading = ghost.hasPrefix(" ") ? " " : ""
             let body = leading.isEmpty ? ghost : String(ghost.dropFirst())
             let parts = body.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)

@@ -22,7 +22,13 @@ final class AppDependencies {
     private var screenContextCache: (text: String, at: Date)?
     private let screenContextCacheTTL: TimeInterval = 2.0
 
+    /// Non-zero when the current overlay shows an emoji suggestion rather than an ML
+    /// completion. Counts the characters of the `:shortcode` that Tab must replace
+    /// (e.g. `:wave` → 5). Reset to 0 at the start of every runCompletion cycle.
+    var emojiReplacementLength: Int = 0
+
     private func runCompletion() async {
+        emojiReplacementLength = 0
         guard inferenceEngine.isLoaded else { return }
 
         // Read the text around the cursor. Prefer the Accessibility API (full
@@ -55,6 +61,23 @@ final class AppDependencies {
         } else {
             screenContext = nil
             screenContextCache = nil
+        }
+
+        // Emoji fast path: when the user types `:shortcode`, bypass ML inference entirely
+        // and surface the matching emoji as ghost text.  Tab acceptance uses replaceCurrentWord
+        // to swap the `:shortcode` for the emoji.  emojiReplacementLength encodes how many
+        // characters to delete (1 colon + shortcode length).
+        if EmojiSuggester.isEmojiMode(textBeforeCursor: context.textBeforeCursor),
+           let shortcode = EmojiSuggester.shortcode(from: context.textBeforeCursor),
+           let emoji = EmojiSuggester.suggest(shortcode: shortcode).first,
+           let cursorRect = accessibilityManager.cursorScreenRect() {
+            let fontSize = accessibilityManager.focusedFontSize()
+            emojiReplacementLength = 1 + shortcode.count  // ":" + shortcode
+            inferenceEngine.cancelCurrent()
+            print("😀 emoji '\(emoji)' for :\(shortcode) at \(cursorRect.origin)")
+            completionOverlay.show(text: emoji, near: cursorRect, fontSize: fontSize)
+            keyMonitor.isOverlayVisible = true
+            return
         }
 
         // Require a minimum typed prefix before firing. Check textBeforeCursor directly —
