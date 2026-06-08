@@ -119,8 +119,14 @@ final class AccessibilityManager {
             }
         }
         // Fallback: synthetic backspaces then inject.
+        injectReplacement(replacement, deletingCount: wordLength)
+    }
+
+    /// Deletes `deletingCount` characters before the cursor via synthetic backspace events,
+    /// then injects `replacement`. Used when AX range selection is unavailable.
+    func injectReplacement(_ replacement: String, deletingCount: Int) {
         guard let source = CGEventSource(stateID: .combinedSessionState) else { return }
-        for _ in 0 ..< wordLength {
+        for _ in 0 ..< deletingCount {
             let down = CGEvent(keyboardEventSource: source, virtualKey: 51, keyDown: true) // backspace
             down?.setIntegerValueField(.eventSourceUserData, value: AccessibilityManager.injectedEventMarker)
             down?.post(tap: .cgAnnotatedSessionEventTap)

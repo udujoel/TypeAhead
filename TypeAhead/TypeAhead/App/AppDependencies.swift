@@ -22,12 +22,19 @@ final class AppDependencies {
     private var screenContextCache: (text: String, at: Date)?
     private let screenContextCacheTTL: TimeInterval = 2.0
 
+    /// Non-zero when the current overlay shows an emoji suggestion rather than an ML
+    /// completion. Counts the characters of the `:shortcode` that Tab must replace
+    /// (e.g. `:wave` → 5). Reset to 0 at the start of every runCompletion cycle.
+    var emojiReplacementLength: Int = 0
+
     private func runCompletion() async {
-        guard inferenceEngine.isLoaded else { return }
+        emojiReplacementLength = 0
 
         // Read the text around the cursor. Prefer the Accessibility API (full
         // field contents); fall back to the keystroke buffer for apps where AX
         // is unavailable (e.g. some Electron apps).
+        // Context reading happens before the model-loaded guard so the emoji fast-path
+        // (which is a pure dictionary lookup) can run even when no ML model is loaded.
         let context: TextContext
         let source: String
         if let axContext = accessibilityManager.readTextContext() {
@@ -40,6 +47,27 @@ final class AppDependencies {
             context = TextContext(textBeforeCursor: bufferText, textAfterCursor: "", appName: appName, windowTitle: "")
             source = "buffer"
         }
+
+        // Emoji fast path: when the user types `:shortcode`, bypass ML inference entirely
+        // and surface the matching emoji as ghost text.  Tab acceptance uses replaceCurrentWord
+        // to swap the `:shortcode` for the emoji.  emojiReplacementLength encodes how many
+        // characters to delete (1 colon + shortcode length).
+        // Runs even when no model is loaded — emoji lookup needs no inference engine.
+        if EmojiSuggester.isEmojiMode(textBeforeCursor: context.textBeforeCursor),
+           let shortcode = EmojiSuggester.shortcode(from: context.textBeforeCursor),
+           let emoji = EmojiSuggester.suggest(shortcode: shortcode).first,
+           let cursorRect = accessibilityManager.cursorScreenRect() {
+            let fontSize = accessibilityManager.focusedFontSize()
+            emojiReplacementLength = 1 + shortcode.count  // ":" + shortcode
+            inferenceEngine.cancelCurrent()
+            print("😀 emoji '\(emoji)' for :\(shortcode) at \(cursorRect.origin)")
+            completionOverlay.show(text: emoji, near: cursorRect, fontSize: fontSize)
+            keyMonitor.isOverlayVisible = true
+            return
+        }
+
+        // ML inference requires the model to be loaded.
+        guard inferenceEngine.isLoaded else { return }
 
         // Screen context: OCR the frontmost window to give the model ambient topic signal.
         // Cache for 2s so rapid keystrokes don't re-capture on every completion.
