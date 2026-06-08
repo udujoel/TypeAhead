@@ -12,7 +12,7 @@ hurting; then the high-impact UX wins; personalization and Screen Context are la
 
 ---
 
-## 1. Stop re-granting Accessibility on every build (stable code signing)
+## ~~1. Stop re-granting Accessibility on every build (stable code signing)~~ ✅ DONE
 
 **Problem.** Every rebuild changes the app's ad-hoc signature, so macOS forgets the
 Accessibility grant and the user must re-enable TypeAhead in System Settings each time.
