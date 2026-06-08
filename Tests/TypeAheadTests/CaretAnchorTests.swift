@@ -1,0 +1,69 @@
+import Testing
+@testable import TypeAhead
+import AppKit
+
+/// Tests for the pure caret-anchoring geometry used to keep the ghost overlay
+/// on the same line as the caret — and to reject the off-screen AX bounds that
+/// Electron apps (Teams, Slack, Claude desktop) report for their Chromium fields.
+@Suite struct CaretAnchorTests {
+
+    // A primary screen at the origin and a secondary monitor to the LEFT (legal
+    // negative coordinates) — mirrors a real two-monitor layout.
+    private let primary = NSRect(x: 0, y: 0, width: 1920, height: 1080)
+    private let secondaryLeft = NSRect(x: -1920, y: 0, width: 1920, height: 1080)
+
+    // MARK: - isOnScreen (rect validation)
+
+    @Test func caretInsidePrimaryScreenIsOnScreen() {
+        let caret = NSRect(x: 400, y: 500, width: 0, height: 18)
+        #expect(OverlayPositioner.isOnScreen(caret, screenFrames: [primary]))
+    }
+
+    @Test func negativeCaretOnSecondaryMonitorIsOnScreen() {
+        // Legal: a caret on a monitor positioned to the left has a negative X.
+        let caret = NSRect(x: -800, y: 300, width: 0, height: 18)
+        #expect(OverlayPositioner.isOnScreen(caret, screenFrames: [primary, secondaryLeft]))
+    }
+
+    @Test func farNegativeCaretOffAllScreensIsNotOnScreen() {
+        // The Electron failure mode: cursor=(-2427.23, -139.98) — outside every screen.
+        let caret = NSRect(x: -2427.23, y: -139.98, width: 0, height: 20)
+        #expect(!OverlayPositioner.isOnScreen(caret, screenFrames: [primary, secondaryLeft]))
+    }
+
+    @Test func degenerateZeroHeightCaretIsNotOnScreen() {
+        let caret = NSRect(x: 400, y: 500, width: 0, height: 0)
+        #expect(!OverlayPositioner.isOnScreen(caret, screenFrames: [primary]))
+    }
+
+    @Test func nonFiniteCaretIsNotOnScreen() {
+        let caret = NSRect(x: CGFloat.nan, y: 500, width: 0, height: 18)
+        #expect(!OverlayPositioner.isOnScreen(caret, screenFrames: [primary]))
+    }
+
+    // MARK: - clampedOrigin (keep the panel inside the visible frame)
+
+    private let visible = NSRect(x: 0, y: 0, width: 1920, height: 1080)
+    private let panel = NSSize(width: 300, height: 24)
+
+    @Test func originInsideFrameIsUnchanged() {
+        let origin = OverlayPositioner.clampedOrigin(x: 500, y: 400, panelSize: panel, visibleFrame: visible)
+        #expect(origin.x == 500)
+        #expect(origin.y == 400)
+    }
+
+    @Test func originPastRightEdgeIsClampedLeft() {
+        let origin = OverlayPositioner.clampedOrigin(x: 1900, y: 400, panelSize: panel, visibleFrame: visible)
+        #expect(origin.x == visible.maxX - panel.width) // 1620
+    }
+
+    @Test func negativeOriginIsClampedToLeftEdge() {
+        let origin = OverlayPositioner.clampedOrigin(x: -500, y: 400, panelSize: panel, visibleFrame: visible)
+        #expect(origin.x == visible.minX) // 0
+    }
+
+    @Test func originBelowBottomIsClampedUp() {
+        let origin = OverlayPositioner.clampedOrigin(x: 500, y: -50, panelSize: panel, visibleFrame: visible)
+        #expect(origin.y == visible.minY) // 0
+    }
+}

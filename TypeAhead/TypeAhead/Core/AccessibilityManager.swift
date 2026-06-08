@@ -56,6 +56,19 @@ final class AccessibilityManager {
         return (String(text[..<idx]), String(text[idx...]))
     }
 
+    /// Whether an AX write that returned `.success` actually did nothing (the silent no-op
+    /// Electron/Chromium fields exhibit). Only decidable for **pure insertions** — an empty
+    /// selection makes a real write strictly grow the field, so `after <= before` means it was
+    /// ignored. With a non-empty selection the write REPLACES it and the field may legitimately
+    /// shrink or stay equal (`:wave`→👋, `colour`→`color `), so length cannot distinguish a
+    /// success from a no-op; we trust the result and never fall back (avoids double-injection).
+    /// Returns false when either length is unreadable — trust `.success` rather than risk a
+    /// second insertion.
+    nonisolated static func isSilentNoOp(selectionLength: Int, lengthBefore: Int?, lengthAfter: Int?) -> Bool {
+        guard selectionLength == 0, let before = lengthBefore, let after = lengthAfter else { return false }
+        return after <= before
+    }
+
     // MARK: - AX Live API
 
     private var didProbeAX = false
@@ -87,9 +100,22 @@ final class AccessibilityManager {
             injectText(text)
             return
         }
+        // Snapshot field + selection state before the write. Electron/Chromium fields return
+        // .success from AXUIElementSetAttributeValue but never apply the insertion — Tab
+        // appears to accept (the ghost advances) while nothing lands. Checking the error
+        // code alone misses this; we verify the field actually changed. The selection length
+        // matters: with a selection the write REPLACES it, so the field can legitimately not
+        // grow — length-based verification only holds for a pure insertion (empty selection).
+        let selectionLength = element.selectedRange?.length ?? 0
+        let lengthBefore = element.stringValue?.count
         let result = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString)
         if result != .success {
             print("⚠️ AX insertCompletion failed (\(result.rawValue)) — falling back to CGEvent injection")
+            injectText(text)
+            return
+        }
+        if Self.isSilentNoOp(selectionLength: selectionLength, lengthBefore: lengthBefore, lengthAfter: element.stringValue?.count) {
+            print("⚠️ AX insertCompletion reported success but field unchanged — CGEvent fallback")
             injectText(text)
         }
     }
@@ -163,9 +189,17 @@ final class AccessibilityManager {
             // (BOTTOM-left, Y up) around the menu-bar screen's height (screens[0]).
             let menuBarHeight = NSScreen.screens.first?.frame.maxY ?? NSScreen.main?.frame.maxY ?? 0
             let flippedY = menuBarHeight - axRect.maxY
-            return NSRect(x: axRect.origin.x, y: flippedY, width: axRect.width, height: axRect.height)
+            let cocoaRect = NSRect(x: axRect.origin.x, y: flippedY, width: axRect.width, height: axRect.height)
+            // Electron/Chromium fields (Teams, Slack, Claude desktop) sometimes answer on the
+            // AX path but report caret bounds that map OFF every screen (e.g. -2427,-139). The
+            // overlay would faithfully render off-screen. Trust the rect only when it actually
+            // lands on a screen; otherwise fall through to the mouse-anchored last resort.
+            if OverlayPositioner.isOnScreen(cocoaRect, screenFrames: NSScreen.screens.map(\.frame)) {
+                return cocoaRect
+            }
         }
-        // AX unavailable — position overlay near the mouse cursor (already Cocoa coords).
+        // AX unavailable or caret off-screen — position overlay near the mouse cursor
+        // (already Cocoa coords). Keeps the ghost on-screen near where the user is working.
         let mouse = NSEvent.mouseLocation
         return NSRect(x: mouse.x, y: mouse.y - 24, width: 0, height: 20)
     }
