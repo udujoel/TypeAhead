@@ -296,6 +296,35 @@ final class AccessibilityManager {
         return (role as? String) == "AXPasswordField"
     }
 
+    /// The focused window's frame in Cocoa screen coordinates (bottom-left origin), or nil if
+    /// AX can't supply it. Used to pin the overlay above the window's input when the caret rect
+    /// is untrustworthy. AX reports top-left origin; we flip around the menu-bar screen height.
+    func focusedWindowScreenFrame() -> NSRect? {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(axApp, 2.0)
+        var windowRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &windowRef) == .success,
+              let window = windowRef else { return nil }
+        let win = window as! AXUIElement
+
+        var posRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posRef) == .success,
+              AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &sizeRef) == .success,
+              let posRef, let sizeRef else { return nil }
+
+        var origin = CGPoint.zero
+        var size = CGSize.zero
+        AXValueGetValue(posRef as! AXValue, .cgPoint, &origin)
+        AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+        guard size.width > 0, size.height > 0, origin.x.isFinite, origin.y.isFinite else { return nil }
+
+        let menuBarHeight = NSScreen.screens.first?.frame.maxY ?? NSScreen.main?.frame.maxY ?? 0
+        let flippedY = menuBarHeight - (origin.y + size.height)
+        return NSRect(x: origin.x, y: flippedY, width: size.width, height: size.height)
+    }
+
     private func focusedWindowTitle() -> String? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
         let axApp = AXUIElementCreateApplication(app.processIdentifier)
