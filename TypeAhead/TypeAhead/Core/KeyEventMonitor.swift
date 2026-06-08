@@ -213,6 +213,8 @@ final class KeyEventMonitor {
         // Option+Right Arrow — alternate accept key for apps where Tab is consumed (browsers, terminals).
         // Swallowed and treated as accept only when the overlay is visible; otherwise passes through
         // as normal macOS word-forward navigation.
+        // Task spawn frequency is not a concern: onTabPressed hides the overlay, so isOverlayVisible
+        // becomes false before any repeat event arrives and subsequent events fall through to passRetained.
         if keyCode == CGKeyCode(kVK_RightArrow) && event.flags.contains(.maskAlternate) {
             if isOverlayVisible {
                 Task { @MainActor [weak self] in
