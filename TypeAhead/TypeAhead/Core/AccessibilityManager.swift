@@ -139,6 +139,15 @@ final class AccessibilityManager {
             insertCompletion(replacement, into: element)
             return
         }
+        // cgEvent apps (Electron/Chromium) don't honor AX writes reliably: a selection-set can
+        // return .success but silently no-op, after which insertCompletion's injectText appends
+        // the replacement WITHOUT the old word being selected/deleted → garbled ("recievereceive").
+        // Skip the AX-selection path for these apps and delete via synthetic backspaces directly.
+        let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        if AppInsertionPolicy.preferredMethod(forBundleID: bundleID) == .cgEvent {
+            injectReplacement(replacement, deletingCount: wordLength)
+            return
+        }
         // Select the partial word by moving the selection backwards.
         if let current = element.selectedRange {
             let replaceStart = max(0, current.location - wordLength)
