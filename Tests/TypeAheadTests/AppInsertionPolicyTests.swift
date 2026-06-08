@@ -53,6 +53,18 @@ import Testing
         #expect(AppInsertionPolicy.preferredMethod(forBundleID: "io.cursor.Cursor") == .cgEvent)
     }
 
+    @Test func claudeDesktopUsesCGEvent() {
+        #expect(AppInsertionPolicy.preferredMethod(forBundleID: "com.anthropic.claudefordesktop") == .cgEvent)
+    }
+
+    @Test func teamsUsesCGEvent() {
+        #expect(AppInsertionPolicy.preferredMethod(forBundleID: "com.microsoft.teams2") == .cgEvent)
+    }
+
+    @Test func vscodeUsesCGEvent() {
+        #expect(AppInsertionPolicy.preferredMethod(forBundleID: "com.microsoft.VSCode") == .cgEvent)
+    }
+
     // MARK: - AX apps (native AppKit/SwiftUI)
 
     @Test func textEditBundleIDUsesAX() {

@@ -55,5 +55,8 @@ enum AppInsertionPolicy {
         "com.linearapp.linear",        // Linear
         "io.cursor.Cursor",            // Cursor (VS Code fork)
         "com.todesktop.",              // Electron ToDesktop apps (various)
+        "com.anthropic.claudefordesktop", // Claude desktop (Electron) — silent AX no-op on Tab
+        "com.microsoft.teams",         // Microsoft Teams (classic + teams2/new)
+        "com.microsoft.VSCode",        // Visual Studio Code (+ Insiders via prefix)
     ]
 }

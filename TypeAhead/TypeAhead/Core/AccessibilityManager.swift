@@ -87,9 +87,22 @@ final class AccessibilityManager {
             injectText(text)
             return
         }
+        // Snapshot the field length before the write. Electron/Chromium fields return
+        // .success from AXUIElementSetAttributeValue but never apply the insertion — Tab
+        // appears to accept (the ghost advances) while nothing lands. Checking the error
+        // code alone misses this; we must verify the field actually changed.
+        let lengthBefore = element.stringValue?.count
         let result = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString)
         if result != .success {
             print("⚠️ AX insertCompletion failed (\(result.rawValue)) — falling back to CGEvent injection")
+            injectText(text)
+            return
+        }
+        // Verify the write landed. Only treat it as a silent no-op when we can positively
+        // read the length both before AND after and it did not grow — if the value is
+        // unreadable we trust the .success rather than risk a double insertion.
+        if let before = lengthBefore, let after = element.stringValue?.count, after <= before {
+            print("⚠️ AX insertCompletion reported success but field unchanged — CGEvent fallback")
             injectText(text)
         }
     }
@@ -163,9 +176,17 @@ final class AccessibilityManager {
             // (BOTTOM-left, Y up) around the menu-bar screen's height (screens[0]).
             let menuBarHeight = NSScreen.screens.first?.frame.maxY ?? NSScreen.main?.frame.maxY ?? 0
             let flippedY = menuBarHeight - axRect.maxY
-            return NSRect(x: axRect.origin.x, y: flippedY, width: axRect.width, height: axRect.height)
+            let cocoaRect = NSRect(x: axRect.origin.x, y: flippedY, width: axRect.width, height: axRect.height)
+            // Electron/Chromium fields (Teams, Slack, Claude desktop) sometimes answer on the
+            // AX path but report caret bounds that map OFF every screen (e.g. -2427,-139). The
+            // overlay would faithfully render off-screen. Trust the rect only when it actually
+            // lands on a screen; otherwise fall through to the mouse-anchored last resort.
+            if OverlayPositioner.isOnScreen(cocoaRect, screenFrames: NSScreen.screens.map(\.frame)) {
+                return cocoaRect
+            }
         }
-        // AX unavailable — position overlay near the mouse cursor (already Cocoa coords).
+        // AX unavailable or caret off-screen — position overlay near the mouse cursor
+        // (already Cocoa coords). Keeps the ghost on-screen near where the user is working.
         let mouse = NSEvent.mouseLocation
         return NSRect(x: mouse.x, y: mouse.y - 24, width: 0, height: 20)
     }

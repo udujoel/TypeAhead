@@ -432,6 +432,11 @@ as new apps are used; pre-seeded exclusions ship out of the box.
 ---
 
 ## 11. Caret anchoring in Electron/Teams — off-screen overlay from bad AX bounds
+> **First-wave fix shipped** (branch `fix/electron-tab-and-caret-position`): rect-validation
+> escalation rung 1 — `OverlayPositioner.isOnScreen` rejects caret rects that map off every
+> `NSScreen`; `cursorScreenRect()` falls through to the mouse anchor instead of rendering the
+> ghost off-screen. `inlineOrigin` now clamps both X edges so a near-edge anchor stays visible.
+> Deferred: Vision-based caret detection (rung 3) and per-app unreliable-bounds marking.
 
 **Problem.** In Microsoft Teams (and other Electron chat apps), the ghost suggestion does not
 appear on the same line as the text being typed — it renders off-screen or not at all, even
@@ -547,6 +552,12 @@ Builds on [#2], [#9].
 ---
 
 ## 13. Tab acceptance fails silently in Electron apps (e.g. Claude desktop)
+> **First-wave fix shipped** (branch `fix/electron-tab-and-caret-position`): `insertCompletion`
+> now snapshots the field length, and when AX returns `.success` but the field did not grow it
+> treats the write as a silent no-op and falls back to CGEvent injection (the guard is asymmetric
+> — it only fires when length is positively readable before & after, to avoid double-insertion).
+> Claude desktop / Teams / VS Code bundle IDs added to `AppInsertionPolicy` so they skip the
+> doomed AX attempt up front. Deferred: gating ghost-advance on cgEvent success (unobservable).
 
 **Problem.** In Electron apps such as the Claude desktop app, pressing Tab to accept a
 suggestion **advances the ghost to the next word but never inserts the accepted word** into the
