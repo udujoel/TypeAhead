@@ -38,8 +38,11 @@ enum AppInsertionPolicy {
         "com.google.Chrome",
         // Microsoft Edge (Chromium-based)
         "com.microsoft.edgemac",
-        // Firefox / Nightly
+        // Firefox stable / ESR
         "org.mozilla.firefox",
+        // Firefox Nightly (macOS bundle ID changed across releases)
+        "org.mozilla.nightly",         // older Nightly builds
+        "mozilla-official.nightly",    // current official Nightly on macOS
         // Safari (WebKit renders in its own process; AX insert works at the
         // frame level but is unreliable for web content inside the page)
         "com.apple.Safari",
