@@ -21,7 +21,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         deps.keyMonitor.onKeystroke = { [weak deps] event in
             guard let deps else { return }
             let ghost = deps.completionOverlay.currentText
-            if deps.keyMonitor.isOverlayVisible, !ghost.isEmpty,
+            // Spell corrections are replacements, not insertions — type-through would corrupt
+            // the replacement count. Skip it entirely and let the user's keystroke dismiss the
+            // overlay and trigger a fresh completion.
+            if deps.keyMonitor.isOverlayVisible, deps.spellCorrectionLength == 0, !ghost.isEmpty,
                let typed = event.characters, typed.count == 1, ghost.hasPrefix(typed) {
                 let remaining = String(ghost.dropFirst())
                 if remaining.isEmpty {
@@ -73,6 +76,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard !ghost.isEmpty else {
                 deps.keyMonitor.isOverlayVisible = false
                 deps.completionOverlay.hide()
+                return
+            }
+
+            // Spelling correction: replace the misspelled word with the ghost suggestion.
+            if deps.spellCorrectionLength > 0 {
+                let len = deps.spellCorrectionLength
+                deps.spellCorrectionLength = 0
+                let corrected = ghost + " "
+                if let element = deps.accessibilityManager.focusedElement() {
+                    deps.accessibilityManager.replaceCurrentWord(corrected, wordLength: len, into: element)
+                } else {
+                    deps.accessibilityManager.injectReplacement(corrected, deletingCount: len)
+                }
+                // Keep buffer in sync so buffer-fallback mode doesn't re-detect the stale misspelling.
+                deps.keyMonitor.keystrokeBuffer.replaceTrailing(count: len, with: corrected)
+                deps.keyMonitor.isOverlayVisible = false
+                deps.completionOverlay.hide()
+                deps.completionPipeline.keystrokeReceived()
                 return
             }
 

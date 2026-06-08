@@ -22,19 +22,25 @@ final class AppDependencies {
     private var screenContextCache: (text: String, at: Date)?
     private let screenContextCacheTTL: TimeInterval = 2.0
 
+    /// Non-zero when the overlay shows a spelling correction rather than an ML completion.
+    /// Counts the characters of the misspelled word that Tab must replace.
+    /// Reset to 0 at the start of every runCompletion cycle.
+    var spellCorrectionLength: Int = 0
+
     /// Non-zero when the current overlay shows an emoji suggestion rather than an ML
     /// completion. Counts the characters of the `:shortcode` that Tab must replace
     /// (e.g. `:wave` → 5). Reset to 0 at the start of every runCompletion cycle.
     var emojiReplacementLength: Int = 0
 
     private func runCompletion() async {
+        spellCorrectionLength = 0
         emojiReplacementLength = 0
 
         // Read the text around the cursor. Prefer the Accessibility API (full
         // field contents); fall back to the keystroke buffer for apps where AX
         // is unavailable (e.g. some Electron apps).
-        // Context reading happens before the model-loaded guard so the emoji fast-path
-        // (which is a pure dictionary lookup) can run even when no ML model is loaded.
+        // Context reading happens before the model-loaded guard so both fast-paths
+        // (spell correction and emoji lookup) can run even when no ML model is loaded.
         let context: TextContext
         let source: String
         if let axContext = accessibilityManager.readTextContext() {
@@ -46,6 +52,21 @@ final class AppDependencies {
             let appName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
             context = TextContext(textBeforeCursor: bufferText, textAfterCursor: "", appName: appName, windowTitle: "")
             source = "buffer"
+        }
+
+        // Spell-correction fast-path: when the last word before the cursor is misspelled,
+        // bypass ML inference and surface the NSSpellChecker suggestion as ghost text.
+        // Tab acceptance uses replaceCurrentWord to swap the misspelled word in-place.
+        // Runs even when no ML model is loaded.
+        if let fix = TypoDetector.correction(in: context.textBeforeCursor),
+           let cursorRect = accessibilityManager.cursorScreenRect() {
+            let fontSize = accessibilityManager.focusedFontSize()
+            spellCorrectionLength = fix.misspelledLength
+            inferenceEngine.cancelCurrent()
+            print("📝 spell '\(fix.original)' → '\(fix.suggestion)'")
+            completionOverlay.show(text: fix.suggestion, near: cursorRect, fontSize: fontSize)
+            keyMonitor.isOverlayVisible = true
+            return
         }
 
         // Emoji fast path: when the user types `:shortcode`, bypass ML inference entirely
