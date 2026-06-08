@@ -39,4 +39,17 @@ enum OverlayPositioner {
         let clampedY = max(y, visibleFrame.minY)
         return NSPoint(x: clampedX, y: clampedY)
     }
+
+    /// Origin for a bar pinned just above the focused window's bottom edge (where chat/input
+    /// fields live), inset from the left. Used as the always-available floor when the AX caret
+    /// is untrustworthy and Vision has no confident anchor yet. Clamped to stay on-screen.
+    static func pinnedOrigin(windowFrame: NSRect, panelSize: NSSize) -> NSPoint {
+        let leftInset: CGFloat = 12
+        let bottomGap: CGFloat = 8
+        let x = windowFrame.minX + leftInset
+        let y = windowFrame.minY + bottomGap
+        // Clamp inside the window frame so a narrow window can't push the bar off the left.
+        let clampedX = min(max(x, windowFrame.minX), max(windowFrame.minX, windowFrame.maxX - panelSize.width))
+        return NSPoint(x: clampedX, y: y)
+    }
 }

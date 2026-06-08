@@ -66,4 +66,22 @@ import AppKit
         let origin = OverlayPositioner.clampedOrigin(x: 500, y: -50, panelSize: panel, visibleFrame: visible)
         #expect(origin.y == visible.minY) // 0
     }
+
+    // MARK: - pinnedOrigin (bar above the window's input)
+
+    @Test func pinnedOriginSitsNearWindowBottom() {
+        let window = NSRect(x: 100, y: 200, width: 800, height: 600)
+        let p = OverlayPositioner.pinnedOrigin(windowFrame: window, panelSize: NSSize(width: 300, height: 24))
+        // Just above the window's bottom edge, inset from the left.
+        #expect(p.y >= window.minY)
+        #expect(p.y < window.minY + 60)
+        #expect(p.x >= window.minX)
+        #expect(p.x <= window.maxX - 300)
+    }
+
+    @Test func pinnedOriginClampsWideWindowInset() {
+        let window = NSRect(x: 0, y: 0, width: 200, height: 400) // narrower than panel
+        let p = OverlayPositioner.pinnedOrigin(windowFrame: window, panelSize: NSSize(width: 300, height: 24))
+        #expect(p.x == window.minX) // can't inset past the left edge
+    }
 }
