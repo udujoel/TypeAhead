@@ -33,6 +33,13 @@ final class AppDependencies {
     var emojiReplacementLength: Int = 0
 
     private func runCompletion() async {
+        // Per-app exception list takes precedence over the global toggle (CLAUDE.md).
+        // Check it first — before any context reads or inference — so excluded apps pay zero cost.
+        if let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+           settings.exceptionList.isExcluded(bundleID: bundleID) {
+            return
+        }
+
         spellCorrectionLength = 0
         emojiReplacementLength = 0
 

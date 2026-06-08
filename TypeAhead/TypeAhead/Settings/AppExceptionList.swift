@@ -1,6 +1,6 @@
 import Foundation
 
-struct AppExceptionList: Sendable {
+struct AppExceptionList: Sendable, Codable {
     private var excludedBundleIDs: Set<String>
 
     init(bundleIDs: Set<String> = []) {
@@ -18,6 +18,8 @@ struct AppExceptionList: Sendable {
     func isExcluded(bundleID: String) -> Bool {
         excludedBundleIDs.contains(bundleID)
     }
+
+    var bundleIDs: [String] { excludedBundleIDs.sorted() }
 
     static let defaults = AppExceptionList(bundleIDs: [
         "com.agilebits.onepassword7",

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import TypeAhead
 
@@ -35,5 +36,65 @@ import Testing
         let list = AppExceptionList.defaults
         #expect(list.isExcluded(bundleID: "com.agilebits.onepassword7"))
         #expect(list.isExcluded(bundleID: "desktop.Bitwarden"))
+    }
+
+    @Test func defaultExclusionListContainsDeveloperTools() {
+        let list = AppExceptionList.defaults
+        #expect(list.isExcluded(bundleID: "com.apple.Terminal"))
+        #expect(list.isExcluded(bundleID: "com.microsoft.VSCode"))
+        #expect(list.isExcluded(bundleID: "com.apple.dt.Xcode"))
+        #expect(list.isExcluded(bundleID: "com.googlecode.iterm2"))
+    }
+
+    @Test func exceptionListIsNotExcludedForUnknownApp() {
+        let list = AppExceptionList.defaults
+        #expect(!list.isExcluded(bundleID: "com.apple.TextEdit"))
+        #expect(!list.isExcluded(bundleID: "com.example.unknown"))
+    }
+
+    @Test func exceptionListCodableRoundTrip() throws {
+        var list = AppExceptionList.defaults
+        list.add(bundleID: "com.custom.app")
+        let data = try JSONEncoder().encode(list)
+        let decoded = try JSONDecoder().decode(AppExceptionList.self, from: data)
+        #expect(decoded.isExcluded(bundleID: "com.agilebits.onepassword7"))
+        #expect(decoded.isExcluded(bundleID: "com.custom.app"))
+        #expect(!decoded.isExcluded(bundleID: "com.apple.TextEdit"))
+    }
+
+    @Test func settingsExceptionListStartsFromDefaults() {
+        let settings = AppSettings()
+        #expect(settings.exceptionList.isExcluded(bundleID: "com.apple.Terminal"))
+        #expect(!settings.exceptionList.isExcluded(bundleID: "com.apple.TextEdit"))
+    }
+
+    @Test func bundleIDsReturnsEmptyForEmptyList() {
+        let list = AppExceptionList()
+        #expect(list.bundleIDs.isEmpty)
+    }
+
+    @Test func bundleIDsReturnsSortedList() {
+        var list = AppExceptionList()
+        list.add(bundleID: "com.z.app")
+        list.add(bundleID: "com.a.app")
+        list.add(bundleID: "com.m.app")
+        #expect(list.bundleIDs == ["com.a.app", "com.m.app", "com.z.app"])
+    }
+
+    @Test func bundleIDsReflectsRemoval() {
+        var list = AppExceptionList()
+        list.add(bundleID: "com.example.one")
+        list.add(bundleID: "com.example.two")
+        list.remove(bundleID: "com.example.one")
+        #expect(list.bundleIDs == ["com.example.two"])
+    }
+
+    @Test func bundleIDsDefaultsContainsKnownEntries() {
+        let list = AppExceptionList.defaults
+        let ids = list.bundleIDs
+        #expect(ids.contains("com.apple.Terminal"))
+        #expect(ids.contains("com.microsoft.VSCode"))
+        #expect(ids.contains("com.agilebits.onepassword7"))
+        #expect(ids == ids.sorted())
     }
 }
