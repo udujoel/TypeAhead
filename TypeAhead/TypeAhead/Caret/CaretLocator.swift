@@ -60,9 +60,15 @@ final class CaretLocator {
                 Self.recognizeText(in: cg)
             }.value
             let anchor = CaretGeometry.bestMatch(trailingText: trailing, observations: observations, in: windowFrame)
-            self.cachedAnchor = anchor
-            self.cachedWindow = windowFrame
-            print("👁️ vision: \(observations.count) text lines, trailing='\(trailing.suffix(16))' → anchor=\(anchor.map { "(\(Int($0.origin.x)),\(Int($0.origin.y)))" } ?? "NO MATCH")")
+            if let anchor {
+                self.cachedAnchor = anchor
+                self.cachedWindow = windowFrame
+            }
+            // On NO MATCH leave cachedAnchor/cachedWindow intact — a stale-but-real anchor is
+            // better than snapping to the pinned bar. It expires naturally via lastComputed+TTL.
+            let anchorDesc = anchor.map { "(\(Int($0.origin.x)),\(Int($0.origin.y)))" }
+                ?? (cachedAnchor != nil ? "NO MATCH (kept prev \(Int(cachedAnchor!.origin.x)),\(Int(cachedAnchor!.origin.y)))" : "NO MATCH")
+            print("👁️ vision: \(observations.count) text lines, trailing='\(trailing.suffix(16))' → anchor=\(anchorDesc)")
         }
     }
 

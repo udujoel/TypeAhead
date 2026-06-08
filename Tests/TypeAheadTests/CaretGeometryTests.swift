@@ -47,4 +47,17 @@ import AppKit
         let obs = [CaretGeometry.Observation(text: "anything", box: NSRect(x: 0, y: 0, width: 0.1, height: 0.03))]
         #expect(CaretGeometry.bestMatch(trailingText: "", observations: obs, in: window) == nil)
     }
+
+    /// Long trailing text whose OCR snapshot only captured a short suffix should still match.
+    /// Threshold is capped at 8 chars so "check re" (8 chars) found within a 20-char needle
+    /// still satisfies the confidence bar.
+    @Test func bestMatchLongNeedleShortSuffixStillMatches() {
+        // OCR captured the input line before later chars were typed; observation text is "check re".
+        let obs = [
+            CaretGeometry.Observation(text: "check re", box: NSRect(x: 0.1, y: 0.1, width: 0.3, height: 0.03)),
+        ]
+        // Needle is the full typed trailing text — longer than what OCR saw.
+        let anchor = CaretGeometry.bestMatch(trailingText: "check review from the PR", observations: obs, in: window)
+        #expect(anchor != nil, "short OCR suffix should still anchor when needle is long")
+    }
 }

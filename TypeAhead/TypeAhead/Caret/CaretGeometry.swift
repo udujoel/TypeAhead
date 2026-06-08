@@ -26,24 +26,43 @@ enum CaretGeometry {
     /// Finds the observation whose text best contains the user's `trailingText` (the last few
     /// typed characters) and returns a zero-width caret anchor at the RIGHT edge of its box,
     /// in screen coordinates. Returns nil when no observation matches confidently.
+    ///
+    /// Two match directions are tried and the higher score wins:
+    /// - `matchScore`: needle suffix appears in haystack (classic case).
+    /// - `leadingPrefixScore`: needle starts with haystack (OCR captured earlier partial text).
+    /// Threshold is capped at 8 chars so a long needle doesn't demand an impossibly long match.
     static func bestMatch(trailingText: String, observations: [Observation], in windowFrame: CGRect) -> CGRect? {
         let needle = normalize(trailingText)
         guard needle.count >= 3 else { return nil }
+        let threshold = max(3, (min(needle.count, 8) * 7) / 10)
 
         var best: Observation?
         var bestScore = 0
         for obs in observations {
             let hay = normalize(obs.text)
-            let score = matchScore(needle: needle, haystack: hay)
+            let score = max(matchScore(needle: needle, haystack: hay),
+                            leadingPrefixScore(needle: needle, haystack: hay))
             if score > bestScore {
                 bestScore = score
                 best = obs
             }
         }
-        // Require a strong match: at least ~70% of the needle length found.
-        guard let match = best, bestScore >= max(3, (needle.count * 7) / 10) else { return nil }
+        guard let match = best, bestScore >= threshold else { return nil }
         let boxScreen = screenRect(fromNormalized: match.box, in: windowFrame)
         return CGRect(x: boxScreen.maxX, y: boxScreen.minY, width: 0, height: boxScreen.height)
+    }
+
+    /// How many leading chars of `haystack` match the start of `needle`. Handles the case where
+    /// Vision captured a slightly stale snapshot — the OCR text is a prefix of the current typed
+    /// text (e.g. haystack="check re", needle="check review from the PR").
+    static func leadingPrefixScore(needle: String, haystack: String) -> Int {
+        guard !haystack.isEmpty, !needle.isEmpty else { return 0 }
+        var k = min(haystack.count, needle.count)
+        while k >= 3 {
+            if needle.hasPrefix(String(haystack.prefix(k))) { return k }
+            k -= 1
+        }
+        return 0
     }
 
     /// Longest suffix of `needle` that appears in `haystack` (case/space-normalized), as a
