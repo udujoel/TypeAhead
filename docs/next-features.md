@@ -354,6 +354,239 @@ GhostText tests stay green; 3+ new tests for the boundary-reset path.
 
 ---
 
+## 10. Per-app settings — exclusion list and per-app overrides
+
+**Problem.** Completions fire in every app, including ones where they are actively harmful
+or annoying: IDEs with their own autocomplete (Xcode, VS Code, Android Studio), password
+managers, browsers where Tab navigates between form fields, terminals. There is no way to
+turn off TypeAhead for a specific app without disabling it globally.
+
+**Inspiration.** Cotpyist's App Settings panel (screenshot reference): a sidebar listing
+all apps that have been seen, with per-app overrides for completions on/off, mid-line
+completions, Tab key disabled, compatibility mode, custom instructions, and typing-history
+collection. Defaults cascade from global settings; overrides are stored per bundle ID.
+
+**Current state.** `AppSettings` has a global `isEnabled` toggle and a
+`perAppExceptions: [String: Bool]` dictionary (bundle ID → enabled) used in Feature #8's
+insertion policy. There is no UI to manage this list and no granular per-app controls
+beyond the simple on/off.
+
+**Proposed design.**
+
+- **Data model.** Replace the simple `[String: Bool]` exceptions dict with a richer
+  `[String: AppOverride]` struct stored in `AppSettings`:
+  ```
+  struct AppOverride: Codable {
+      var completionsEnabled: Bool?   // nil = inherit global
+      var midLineEnabled: Bool?
+      var tabKeyDisabled: Bool?
+      var compatibilityMode: Bool?
+      var customInstructions: String?
+  }
+  ```
+  `nil` means "use the global default" — the UI shows "Default (on/off)" just like
+  Cotpyist. Only explicit per-app values override.
+
+- **Auto-registration.** When TypeAhead sees a new focused app (via AX focus notification),
+  if it has no entry it adds one with all-nil overrides. This is how the app list populates
+  automatically without the user managing it manually.
+
+- **App Settings view.** A new `AppSettingsView` (macOS `List` + detail panel) in the
+  Settings window:
+  - Left sidebar: list of registered apps with their icon (`NSWorkspace.icon(forFile:)`),
+    name, and a quick badge if completions are disabled.
+  - Right detail: the override toggles for that app (matching the Cotpyist screenshot
+    layout), plus a "Remove" button to delete the entry.
+  - A "+" button to add an app manually (file picker for `.app` bundles).
+
+- **Policy resolution.** `CompletionPipeline` (and `KeyEventMonitor` for Tab intercept)
+  look up the active app's bundle ID, resolve the effective value by merging the override
+  with the global default, and gate accordingly. Centralise this in a
+  `AppPolicyResolver.resolve(bundleID:) -> AppPolicy` helper so every consumer has one
+  source of truth.
+
+- **Pre-populated exclusions.** Ship with sensible defaults already disabled:
+  `com.apple.Passwords`, `com.1password.1password`, `com.bitwarden.desktop`,
+  `com.apple.keychainaccess`. These are stored as built-in exclusion seeds; the user can
+  override them.
+
+- **Tab key "Disable" toggle.** When `tabKeyDisabled` is true for the active app,
+  `KeyEventMonitor` passes Tab through un-intercepted. This directly solves the browser /
+  form-navigation conflict identified in Feature #8.
+
+**Files.** New `AppOverride.swift` (model), new `AppSettingsView.swift` (UI),
+`AppPolicyResolver.swift` (resolution logic), `AppSettings` (replace exceptions dict),
+`CompletionPipeline.swift` and `KeyEventMonitor.swift` (consume resolver),
+`AppExceptionList.swift` (fold into `AppPolicyResolver` or delete),
+Settings window (add "App Settings" tab).
+**Effort.** Medium (model + resolution is small; the SwiftUI list+detail view is the bulk).
+**Risk.** Auto-registration could accumulate stale entries for uninstalled apps — add a
+"clean up unlaunched apps" sweep, or just let the user delete manually.
+**Dependencies.** Feature #8's `AppExceptionList` and insertion-policy work should be
+folded in here rather than done separately to avoid duplicate infrastructure.
+**Acceptance.** TypeAhead can be disabled for Xcode, Bitwarden, and System Passwords with
+no completions firing; Tab passes through in browsers (when `tabKeyDisabled` = true);
+global settings cascade correctly when overrides are "Default"; the app list auto-populates
+as new apps are used; pre-seeded exclusions ship out of the box.
+
+---
+
+## 11. Caret anchoring in Electron/Teams — off-screen overlay from bad AX bounds
+
+**Problem.** In Microsoft Teams (and other Electron chat apps), the ghost suggestion does not
+appear on the same line as the text being typed — it renders off-screen or not at all, even
+though a suggestion is being generated.
+
+**Root cause (confirmed from logs).** This is *not* the `[buffer]` fallback from Feature #8.
+The Accessibility API successfully reads the focused field (`source=[AX]`, the probe reports
+"OK — read 368 chars"), but `kAXBoundsForRange` returns a **negative, off-screen caret rect**:
+
+```
+⌨️ [AX] prompt='…Versioning defould, its support from root' cursor=(-2427.23, -139.98, 0.0, 20.0)
+👻 overlay.show '?' at (-2427.23, -139.98)        ← overlay faithfully placed off-screen
+```
+
+Electron renders its own text via Chromium, not native `NSTextView`, so the AX element it
+exposes reports caret bounds in a coordinate space that doesn't map to the real on-screen
+glyph position (here, a large negative origin with zero width). The overlay positioner trusts
+the rect verbatim and places the ghost where nothing is visible.
+
+**Proposed design.**
+- **Validate the caret rect against screen geometry.** Before showing the overlay, check the
+  rect's origin falls inside the union of `NSScreen.screens[].frame`. If it's outside all
+  screens (negative off-screen, or zero/degenerate size), treat the AX rect as untrustworthy
+  and fall through to a fallback anchor rather than rendering blindly. (Negative coordinates
+  are *legal* for secondary monitors, so test against actual screen frames, not `> 0`.)
+- **Vision-based caret detection (the "use screen view" idea).** When the AX rect is rejected,
+  capture the focused window (reuse Feature #6's `ScreenContextProvider` / ScreenCaptureKit
+  pipeline) and locate the insertion point visually: run `VNRecognizeTextRequest` to find the
+  just-typed trailing word on screen and anchor the ghost to the right edge of its bounding
+  box; or detect the focused input region. This is on-device (Vision), fits the no-network
+  rule, and directly implements the user's request that the app "use screen view to see where
+  the suggestion should be placed."
+- **Cheaper fallbacks first (escalation ladder).** (1) trust AX rect if on-screen → (2) last
+  known good rect for this window if the new one is degenerate → (3) Vision caret detection →
+  (4) `NSEvent.mouseLocation` (Feature #8's last-resort anchor). Throttle/cache the Vision
+  step (it's expensive) per focused window, mirroring #6's 2s cache.
+- **Per-app marking.** Record apps where AX bounds are unreliable (Teams, Slack, Discord,
+  Electron bundle-ID prefixes) in the per-app policy (Feature #10 / `AppPolicyResolver`) so the
+  Vision path is preferred without a wasted AX attempt each keystroke.
+
+**Files.** `OverlayPositioner.swift` (rect validation + escalation ladder), new
+`CaretLocator.swift` (Vision-based detection over a captured window), `ScreenshotContextProvider`
+(reuse capture), `AppPolicyResolver`/`AppSettings` (unreliable-bounds flag), tests for the
+rect-validation logic (pure geometry → unit-testable).
+**Effort.** Medium–high (Vision caret detection is the hard part; rect validation is small and
+high-value on its own). **Risk.** Vision latency/battery; OCR may mis-locate the caret in dense
+UIs. Ship rect-validation + escalation first (small, immediate win), Vision second.
+**Acceptance.** In Teams, the ghost appears on the same line as the caret; no overlay is ever
+rendered at coordinates outside every `NSScreen`; negative-origin `cursor=` lines no longer
+produce a visible-but-misplaced overlay. Builds on [#6], [#8], [#10].
+
+---
+
+## 12. Suggestion quality — cross-field context contamination + small-model output
+
+**Problem.** The suggestions are frequently nonsensical ("quite horrible at times"). Observed
+ghosts during normal note-taking include `'3pm sync is still on for the client review.'`,
+`'to see if this is doing love today?'`, and `'Thumbs up on the whole thing'` for the prefix
+"The " — plausible English, but unrelated to what the user is writing.
+
+**Root cause (confirmed from logs).** Two compounding factors:
+
+1. **Cross-field / cross-app context contamination.** The 160-char rolling window in
+   `ContextBuilder` is being fed text from a *different field or app* than the one being typed
+   into. The prompt logs show code/markdown fragments bleeding into a plain-text note:
+   ```
+   ⌨️ [AX] prompt='if.i AppDependencies.swift Now l also need to remo]⏎On a new'
+   ⌨️ [AX] prompt='ies.swift Now l also need to remo]⏎• on Teams, the suggestio'
+   ```
+   `AppDependencies.swift … remo]` is content from an *earlier* context (a code/PR discussion),
+   not the note. When the model is primed with mixed, incoherent context it pattern-matches on
+   the wrong fragment and emits off-topic text. This is the cross-**field** sibling of
+   Backlog [#9]'s cross-**paragraph** contamination: #9 trims within one field; this is stale
+   text surviving a focus change between fields/apps (likely the keystroke buffer or a cached
+   prefix not being reset when the focused AX element changes).
+
+2. **Small-model quality ceiling.** The default model is Gemma 4 E2B (3.2 GB, 4-bit). Even with
+   clean context, a 2B-class quantized model produces weak continuations for open-ended prose.
+
+**Proposed design.**
+- **Reset stale context on focus change (highest impact).** Subscribe to AX focus-changed
+  notifications (or detect a focused-element identity change in `AccessibilityManager`) and
+  clear the keystroke buffer + any cached prefix whenever focus moves to a different element or
+  app. Guarantees the rolling window only ever contains text from the *current* field. Add an
+  identity guard so a stale completion from the previous field can't be inserted into the new
+  one (the "acceptance guardrail" already noted in Feature [#2]).
+- **Trust AX read over buffer when available.** When `source=[AX]`, the field's own contents are
+  authoritative — never blend in keystroke-buffer history from a prior field. Audit the path
+  that assembled `if.i AppDependencies.swift…` to find where prior-field text is leaking in.
+- **Tighten generation.** Explicit stop sequences (newline, sentence terminators) instead of
+  post-trim (Feature [#2]'s borrow-list); lower `maxWords` for prose fields to reduce rambling
+  hallucinations like the full-sentence ghosts above.
+- **Model quality options.** Let confident users opt into a larger model (Gemma 4 E4B / Gemma 3
+  4B already in the model table) for better suggestions at higher RAM; surface a quality vs.
+  speed/RAM tradeoff in Settings. Keep E2B the default for the latency target.
+- **Suppress low-confidence output.** If the model's continuation diverges sharply from the
+  trailing prefix (e.g. starts a brand-new clause unrelated to the current sentence), prefer
+  showing nothing over showing a confidently-wrong ghost.
+
+**Files.** `AccessibilityManager.swift` (focus-change reset + focused-element identity),
+`AppDependencies.runCompletion` / keystroke-buffer lifecycle (clear on focus change),
+`ContextBuilder.swift` (ensure AX path never blends buffer history), `InferenceEngine.swift`
+(stop sequences), `AppSettings`/model picker (quality tier), tests for the focus-reset and
+context-isolation logic.
+**Effort.** Medium (focus-reset is small and high-impact; model-tier UI is small; stop-sequence
+tuning is small). **Risk.** Over-aggressive reset could drop legitimate context mid-edit; key on
+genuine element-identity change, not every notification.
+**Acceptance.** Typing in a fresh field never shows ghosts derived from a previously-focused
+field; the contaminated `AppDependencies.swift…` prompt no longer appears when typing a note;
+off-topic full-sentence hallucinations drop measurably; an optional larger model is selectable.
+Builds on [#2], [#9].
+
+---
+
+## 13. Tab acceptance fails silently in Electron apps (e.g. Claude desktop)
+
+**Problem.** In Electron apps such as the Claude desktop app, pressing Tab to accept a
+suggestion **advances the ghost to the next word but never inserts the accepted word** into the
+input. The user sees the suggestion change but no text is committed.
+
+**Root cause.** This is Feature [#8]'s `[AX] path` insertion-rejection mode, now confirmed in a
+specific app. Tab is correctly intercepted by the `CGEventTap` (the overlay logic runs and
+advances word-by-word per Feature #8 sub-task 2), but the actual write —
+`AXUIElementSetAttributeValue` into the Electron/Chromium field — is rejected or no-ops, so the
+field is unchanged while the overlay state moves on. The two halves of "accept" (insert + advance
+ghost) get out of sync: the advance succeeds, the insert silently fails.
+
+**Proposed design.**
+- **CGEvent keystroke-injection fallback (from Feature #8).** When `insertCompletion(_:into:)`
+  via AX returns an error *or* a post-insert verification read shows the field is unchanged,
+  synthesize the accepted characters via `CGEventCreateKeyboardEvent`. Implement the
+  `insertionMethod` enum (`.ax` → `.cgEvent`) that Feature #8 specced; this item is the concrete
+  trigger to build it.
+- **Don't advance the ghost if the insert failed.** Gate the word-by-word advance on a
+  successful insert (or successful CGEvent fallback). If both insertion paths fail, keep the
+  ghost where it is and surface nothing — never advance over text that wasn't committed. Fixes
+  the "shifts to another suggestion but nothing is added" symptom directly.
+- **Post-insert verification.** After an AX insert, re-read the field (or the trailing chars)
+  to confirm the text landed; treat "no change" as a failure that triggers the CGEvent path.
+- **Per-app insertion policy.** Mark Electron bundle-IDs (`com.anthropic.claudefordesktop` /
+  the Claude app's actual ID, plus Slack/Teams/VS Code) to prefer `.cgEvent` up front, via
+  Feature [#10]'s `AppPolicyResolver`, avoiding a doomed AX attempt on every Tab.
+
+**Files.** `AccessibilityManager.swift` (`insertionMethod` enum, CGEvent fallback, post-insert
+verification), `AppDelegate.onTabPressed` (gate ghost-advance on insert success),
+`AppPolicyResolver`/`AppSettings` (per-app insertion method), `KeyEventMonitor` (unchanged
+intercept). **Effort.** Medium. **Risk.** CGEvent injection may prompt for Input Monitoring (the
+buffer path already requires it, so likely no new prompt); some hardened apps may still reject
+synthetic events — the verification step prevents a false "accepted" in that case.
+**Acceptance.** In the Claude desktop app, Tab inserts the accepted word into the input; the
+ghost never advances when nothing was committed; verified working alongside the existing
+TextEdit path. Concrete realization of [#8]'s insertion-fallback sub-task.
+
+---
+
 ## Cross-cutting notes
 - Keep everything **on-device** and **no-network for completions** (project rules).
 - Mind the latency targets (P50 < 80ms, P95 < 250ms) when adding prompt context (3, 4, 6).
