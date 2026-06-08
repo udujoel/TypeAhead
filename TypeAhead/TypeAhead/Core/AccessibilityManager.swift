@@ -191,41 +191,64 @@ final class AccessibilityManager {
         return size
     }
 
+    /// The AX caret rect in Cocoa screen coords, only if finite, sane, and on a screen; else nil.
+    private func onScreenAXCaretRect() -> NSRect? {
+        guard let element = focusedTextElement(), let axRect = axCursorRect(for: element),
+              axRect.origin.x.isFinite, axRect.origin.y.isFinite,
+              axRect.height > 0, axRect.width < 100_000, axRect.height < 100_000 else { return nil }
+        // AX/Quartz coords are global, TOP-left origin (Y down). Flip to Cocoa global
+        // (BOTTOM-left, Y up) around the menu-bar screen's height (screens[0]).
+        let menuBarHeight = NSScreen.screens.first?.frame.maxY ?? NSScreen.main?.frame.maxY ?? 0
+        let flippedY = menuBarHeight - axRect.maxY
+        let cocoaRect = NSRect(x: axRect.origin.x, y: flippedY, width: axRect.width, height: axRect.height)
+        guard OverlayPositioner.isOnScreen(cocoaRect, screenFrames: NSScreen.screens.map(\.frame)) else { return nil }
+        return cocoaRect
+    }
+
     func cursorScreenRect() -> NSRect? {
         let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
         let unreliable = AppInsertionPolicy.unreliableCaretBounds(forBundleID: bundleID)
+        let axRect = onScreenAXCaretRect()
 
-        if !unreliable, let element = focusedTextElement(), let axRect = axCursorRect(for: element),
-           axRect.origin.x.isFinite, axRect.origin.y.isFinite,
-           axRect.height > 0, axRect.width < 100_000, axRect.height < 100_000 {
-            // Reliable app: AX/Quartz coords are global, TOP-left origin (Y down). Flip to Cocoa
-            // global (BOTTOM-left, Y up) around the menu-bar screen's height (screens[0]).
-            let menuBarHeight = NSScreen.screens.first?.frame.maxY ?? NSScreen.main?.frame.maxY ?? 0
-            let flippedY = menuBarHeight - axRect.maxY
-            let cocoaRect = NSRect(x: axRect.origin.x, y: flippedY, width: axRect.width, height: axRect.height)
-            if OverlayPositioner.isOnScreen(cocoaRect, screenFrames: NSScreen.screens.map(\.frame)) {
-                return cocoaRect
+        // Reliable apps: trust the AX caret directly (native AppKit/UIKit is accurate + fast).
+        if !unreliable {
+            if let axRect {
+                print("🎯 caret reliable[\(bundleID)] AX=\(rectStr(axRect))")
+                return axRect
             }
+            let mouse = NSEvent.mouseLocation
+            print("🎯 caret reliable[\(bundleID)] AX=nil → mouse=(\(Int(mouse.x)),\(Int(mouse.y)))")
+            return NSRect(x: mouse.x, y: mouse.y - 24, width: 0, height: 20)
         }
 
-        if unreliable, let windowFrame = focusedWindowScreenFrame() {
-            // Schedule a throttled Vision pass to refine the anchor for subsequent keystrokes.
-            if let element = focusedTextElement(), let value = element.stringValue {
-                let trailing = String(value.suffix(40))
-                caretLocator.refresh(trailingText: trailing, windowFrame: windowFrame)
-            }
-            // Use a fresh Vision anchor for THIS window if we have one; otherwise the pinned bar.
-            if let anchor = caretLocator.freshAnchor(forWindow: windowFrame),
-               OverlayPositioner.isOnScreen(anchor, screenFrames: NSScreen.screens.map(\.frame)) {
-                return anchor
-            }
+        // Unreliable apps (Electron/Chromium): vision → AX caret → pinned bar → mouse. AX stays
+        // as a rung — its rect is usually near the text even when its X lags, which beats the
+        // window-corner pinned bar.
+        let windowFrame = focusedWindowScreenFrame()
+        if let windowFrame, let element = focusedTextElement(), let value = element.stringValue {
+            caretLocator.refresh(trailingText: String(value.suffix(40)), windowFrame: windowFrame)
+        }
+        if let windowFrame, let anchor = caretLocator.freshAnchor(forWindow: windowFrame),
+           OverlayPositioner.isOnScreen(anchor, screenFrames: NSScreen.screens.map(\.frame)) {
+            print("🎯 caret unreliable[\(bundleID)] VISION=\(rectStr(anchor))")
+            return anchor
+        }
+        if let axRect {
+            print("🎯 caret unreliable[\(bundleID)] AX=\(rectStr(axRect)) (no vision; window=\(windowFrame.map(rectStr) ?? "nil"))")
+            return axRect
+        }
+        if let windowFrame {
             let pinned = OverlayPositioner.pinnedOrigin(windowFrame: windowFrame, panelSize: NSSize(width: 1, height: 20))
+            print("🎯 caret unreliable[\(bundleID)] PINNED=(\(Int(pinned.x)),\(Int(pinned.y))) window=\(rectStr(windowFrame)) (no vision, no AX)")
             return NSRect(origin: pinned, size: NSSize(width: 0, height: 20))
         }
-
-        // AX unavailable / no window frame — anchor near the mouse cursor (Cocoa coords).
         let mouse = NSEvent.mouseLocation
+        print("🎯 caret unreliable[\(bundleID)] → mouse=(\(Int(mouse.x)),\(Int(mouse.y))) (no vision/AX/window)")
         return NSRect(x: mouse.x, y: mouse.y - 24, width: 0, height: 20)
+    }
+
+    private func rectStr(_ r: NSRect) -> String {
+        "(\(Int(r.origin.x)),\(Int(r.origin.y)) \(Int(r.width))×\(Int(r.height)))"
     }
 
     // MARK: - CGEvent text injection

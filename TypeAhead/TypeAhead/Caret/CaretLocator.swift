@@ -51,6 +51,7 @@ final class CaretLocator {
                   let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
                 self.cachedAnchor = nil
                 self.cachedWindow = nil
+                print("👁️ vision: capture FAILED (Screen Recording permission off?) — pinned/AX fallback")
                 return
             }
             // OCR off the main thread; synchronous pattern (read request.results directly — no
@@ -58,9 +59,10 @@ final class CaretLocator {
             let observations = await Task.detached(priority: .userInitiated) {
                 Self.recognizeText(in: cg)
             }.value
-            self.cachedAnchor = CaretGeometry.bestMatch(
-                trailingText: trailing, observations: observations, in: windowFrame)
+            let anchor = CaretGeometry.bestMatch(trailingText: trailing, observations: observations, in: windowFrame)
+            self.cachedAnchor = anchor
             self.cachedWindow = windowFrame
+            print("👁️ vision: \(observations.count) text lines, trailing='\(trailing.suffix(16))' → anchor=\(anchor.map { "(\(Int($0.origin.x)),\(Int($0.origin.y)))" } ?? "NO MATCH")")
         }
     }
 
