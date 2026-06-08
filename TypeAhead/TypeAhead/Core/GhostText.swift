@@ -24,6 +24,8 @@ enum GhostText {
             // often runs on into new sentences/lines we don't want inline.
             let firstLine = cleaned.prefix { $0 != "\n" }
             continuation = normalizeWhitespace(String(firstLine))
+            // Guard against the model restating the partial current word (→ "woworking").
+            continuation = stripCurrentWordRestatement(typed: typed, continuation: continuation)
         } else {
             continuation = alignedContinuation(typed: typed, output: cleaned)
         }
@@ -71,6 +73,27 @@ enum GhostText {
 
     private static func endsWithWhitespace(_ s: String) -> Bool {
         s.last.map { $0 == " " || $0 == "\n" || $0 == "\t" } ?? true
+    }
+
+    /// The partial word currently being typed: the trailing run of non-whitespace characters
+    /// before the cursor. Empty when the text ends with whitespace (not mid-word).
+    static func currentPartialWord(_ typed: String) -> String {
+        String(typed.reversed().prefix { $0 != " " && $0 != "\n" && $0 != "\t" }.reversed())
+    }
+
+    /// In fill-in-middle mode the model should emit only the text AFTER the cursor, but small
+    /// models sometimes restate the partial word the user is mid-typing (typed "wo", model
+    /// emits "working") — inserting that verbatim duplicates the prefix ("woworking"). When the
+    /// user is mid-word and the continuation begins with the current partial word, drop that
+    /// overlap. Skips single-character partials (too risky — could merge a legitimate new word).
+    static func stripCurrentWordRestatement(typed: String, continuation: String) -> String {
+        guard !continuation.isEmpty, !endsWithWhitespace(typed) else { return continuation }
+        let partial = currentPartialWord(typed)
+        guard partial.count >= 2 else { return continuation }
+        if continuation.lowercased().hasPrefix(partial.lowercased()) {
+            return String(continuation.dropFirst(partial.count))
+        }
+        return continuation
     }
 
     /// Keeps at most `maxWords` space-separated words.

@@ -60,4 +60,43 @@ import Testing
         let result = GhostText.build(typed: "I am", raw: " typing fast", isFillInMiddle: true, maxWords: 4)
         #expect(result.hasPrefix(" "))
     }
+
+    // MARK: - Current-word restatement (woworking bug)
+
+    @Test func fimStripsRestatedPartialWord() {
+        // Typed "wo" mid-word; model restated the whole word "working".
+        // Ghost must be only the missing suffix so Tab yields "working", not "woworking".
+        let ghost = GhostText.build(typed: "The tab to accept is wo", raw: "working", isFillInMiddle: true)
+        #expect(ghost == "rking")
+    }
+
+    @Test func fimKeepsTrueSuffixUnchanged() {
+        // Model already emitted suffix-only — must be left alone.
+        let ghost = GhostText.build(typed: "The tab to accept is wo", raw: "rking", isFillInMiddle: true)
+        #expect(ghost == "rking")
+    }
+
+    @Test func fimNewWordAfterSpaceIsNotStripped() {
+        // Trailing space = not mid-word; a new word keeps its leading space, no stripping.
+        let ghost = GhostText.build(typed: "hello ", raw: "world", isFillInMiddle: true)
+        #expect(ghost == "world")
+    }
+
+    @Test func stripCurrentWordRestatementDropsOverlap() {
+        #expect(GhostText.stripCurrentWordRestatement(typed: "is wo", continuation: "working") == "rking")
+    }
+
+    @Test func stripCurrentWordRestatementIgnoresNonMatch() {
+        #expect(GhostText.stripCurrentWordRestatement(typed: "is wo", continuation: "rking") == "rking")
+    }
+
+    @Test func stripCurrentWordRestatementSkipsSingleCharPartial() {
+        // Single-char partial is too risky to strip (could merge a legit new word).
+        #expect(GhostText.stripCurrentWordRestatement(typed: "a", continuation: "apple") == "apple")
+    }
+
+    @Test func currentPartialWordReadsTrailingToken() {
+        #expect(GhostText.currentPartialWord("The tab to accept is wo") == "wo")
+        #expect(GhostText.currentPartialWord("done ") == "")
+    }
 }
