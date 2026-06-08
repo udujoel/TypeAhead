@@ -76,6 +76,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
+            // Spelling correction: replace the misspelled word with the ghost suggestion.
+            if deps.spellCorrectionLength > 0 {
+                let len = deps.spellCorrectionLength
+                deps.spellCorrectionLength = 0
+                if let element = deps.accessibilityManager.focusedElement() {
+                    deps.accessibilityManager.replaceCurrentWord(ghost + " ", wordLength: len, into: element)
+                } else {
+                    deps.accessibilityManager.injectReplacement(ghost + " ", deletingCount: len)
+                }
+                deps.keyMonitor.isOverlayVisible = false
+                deps.completionOverlay.hide()
+                deps.completionPipeline.keystrokeReceived()
+                return
+            }
+
             // Emoji replacement: swap the `:shortcode` text with the emoji.
             if deps.emojiReplacementLength > 0 {
                 let len = deps.emojiReplacementLength
