@@ -210,6 +210,23 @@ final class KeyEventMonitor {
             return Unmanaged.passRetained(event)
         }
 
+        // Option+Right Arrow — alternate accept key for apps where Tab is consumed (browsers, terminals).
+        // Only fires when Option is the *sole* modifier: ⇧⌥→ (select word forward) passes through.
+        // Task spawn frequency is not a concern: onTabPressed hides the overlay, so isOverlayVisible
+        // becomes false before any repeat event arrives and subsequent events fall through below.
+        let optionOnly = event.flags.intersection([.maskShift, .maskCommand, .maskControl, .maskAlternate]) == .maskAlternate
+        if keyCode == CGKeyCode(kVK_RightArrow) && optionOnly {
+            if isOverlayVisible {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.onTabPressed?()
+                }
+                return nil  // swallowed — app never sees this ⌥→
+            }
+            // Overlay not visible — pass through, but fall into the block below so
+            // onKeystroke? fires and cancels any in-flight inference (CLAUDE.md rule).
+        }
+
         // All other keys — update buffer and trigger completion pipeline
         if let nsEvent = NSEvent(cgEvent: event) {
             keystrokeBuffer.process(nsEvent)
