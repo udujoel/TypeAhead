@@ -4,6 +4,26 @@ Most-recent entry first.  Each run appends to the top.
 
 ---
 
+## 2026-06-08 09:00
+
+**PR reviews addressed:**
+- PR #12 (feature/app-insertion-policy): Replied to Devin 🚩 ANALYSIS thread — AppExceptionList gap noted as fixed in PR #16.
+- PR #13 (feature/alternate-accept-key): Replied to Devin 🚩 ANALYSIS thread — fallback monitor limitation (can't swallow ⌥→) acknowledged as known constraint; doc comment to be added.
+- PR #14 (feature/emoji-suggestions): Replied to Devin 🚩 ANALYSIS thread — stale ML inference race acknowledged as pre-existing; generation-counter fix tracked as future follow-up.
+- PR #15 (feature/spelling-correction): Replied to Devin 🚩 ANALYSIS thread — full-word ghost text confirmed as intentional design choice; BUG-0001 type-through fix makes it safe.
+- PR #16 (feature/exception-list-pipeline): No reviews yet (brand new PR).
+
+**Feature work:**
+- Branch: `feature/exception-list-pipeline` — added user-editable Per-App Exceptions section to Settings → General. Users can add/remove bundle IDs from `settings.exceptionList` via a text field + Add button and minus buttons. `AppExceptionList` gains `bundleIDs: [String]` (sorted) for the list view. `addBundleID()` skips duplicates. PR #16 body updated to describe the UI addition.
+- Tests: 135 pass (↑4 new `bundleIDs` tests: empty list, sorted order, removal, defaults). BUILD: SUCCEEDED.
+- PR #16 already open — no new PR needed.
+
+**Unfinished / next run should:**
+- Check PRs #12–#16 for new review comments (especially Devin re-reviews on #15 and #16).
+- Next feature increment: AppInsertionPolicy Settings UI (show/edit per-app insertion method map), OR backlog #4 (personalization: inject custom profile persona line into prompt).
+
+---
+
 ## 2026-06-08 08:00
 
 **PR reviews addressed:**
