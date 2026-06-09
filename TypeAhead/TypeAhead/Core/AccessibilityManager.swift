@@ -242,6 +242,13 @@ final class AccessibilityManager {
             print("🎯 caret unreliable[\(bundleID)] VISION=\(rectStr(anchor))")
             return anchor
         }
+        // Stale Vision anchor (TTL expired but same window): still pixel-accurate from a real
+        // OCR scan — far better than the hardcoded window-corner PINNED bar.
+        if let windowFrame, let anchor = caretLocator.staleAnchor(forWindow: windowFrame),
+           OverlayPositioner.isOnScreen(anchor, screenFrames: NSScreen.screens.map(\.frame)) {
+            print("🎯 caret unreliable[\(bundleID)] VISION_STALE=\(rectStr(anchor))")
+            return anchor
+        }
         if let axRect {
             print("🎯 caret unreliable[\(bundleID)] AX=\(rectStr(axRect)) (no vision; window=\(windowFrame.map(rectStr) ?? "nil"))")
             return axRect

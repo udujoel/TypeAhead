@@ -37,6 +37,21 @@ final class CaretLocator {
         return anchor
     }
 
+    /// The cached anchor for `windowFrame` regardless of TTL — stale but pixel-accurate.
+    /// Use as a fallback rung between fresh Vision and AX: a 2-second-old OCR anchor beats
+    /// the hardcoded window-corner PINNED bar.
+    func staleAnchor(forWindow windowFrame: NSRect) -> NSRect? {
+        guard let anchor = cachedAnchor, cachedWindow == windowFrame else { return nil }
+        return anchor
+    }
+
+    /// Test-only: populate the anchor cache without going through the async capture path.
+    func testInjectAnchor(_ anchor: NSRect, window: NSRect) {
+        cachedAnchor = anchor
+        cachedWindow = window
+        lastComputed = .distantPast   // treat as expired so freshAnchor returns nil
+    }
+
     /// Kicks off a throttled background capture+OCR that updates `cachedAnchor`. Safe to call on
     /// every keystroke — it no-ops while one is in flight, within the TTL, or with no capture.
     func refresh(trailingText: String, windowFrame: NSRect, now: Date = Date()) {
