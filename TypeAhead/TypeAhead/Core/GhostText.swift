@@ -20,6 +20,7 @@ enum GhostText {
 
         var continuation: String
         var didStrip = false
+        var stripProducedLeadingSpace = false
         if isFillInMiddle {
             // The output is the continuation. Keep only the current line — the model
             // often runs on into new sentences/lines we don't want inline.
@@ -29,6 +30,9 @@ enum GhostText {
             let beforeStrip = continuation
             continuation = stripCurrentWordRestatement(typed: typed, continuation: continuation)
             didStrip = continuation != beforeStrip
+            // When the stripped partial is itself a word (e.g. "do" from "do you want"),
+            // the remaining text starts with a space (" you want"). Record before tidy() removes it.
+            stripProducedLeadingSpace = didStrip && continuation.hasPrefix(" ")
         } else {
             continuation = alignedContinuation(typed: typed, output: cleaned)
         }
@@ -36,6 +40,14 @@ enum GhostText {
         continuation = tidy(continuation)
         if maxWords > 0 {
             continuation = clampWords(continuation, maxWords)
+        }
+
+        // Restore the word-boundary space that tidy() consumed when stripCurrentWordRestatement
+        // produced it. E.g. typed="I do", raw="do you want" → strip → " you want" → tidy →
+        // "you want" → ghost "I doyou want" ✗. didStrip=true prevents rawBeginsNewWord from
+        // re-adding the space, so we restore it explicitly here.
+        if stripProducedLeadingSpace, !continuation.isEmpty, !endsWithWhitespace(typed) {
+            continuation = " " + continuation
         }
 
         // Preserve the word separator. If the model started a NEW word (its raw output

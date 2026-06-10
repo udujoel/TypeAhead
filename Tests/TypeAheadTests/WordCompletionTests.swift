@@ -109,4 +109,14 @@ import Testing
         #expect(ghost == "rking", "strip occurred — leading-space check must be skipped")
         #expect(!ghost.hasPrefix(" "), "should never have a leading space after a word-restatement strip")
     }
+
+    /// Regression: when the stripped partial is itself a complete word (e.g. partial="do" from
+    /// "do you want"), the remaining text starts with a space (" you want"). tidy() strips it,
+    /// then didStrip=true prevents rawBeginsNewWord from restoring it → ghost "you want" appends
+    /// directly to "I do" giving "I doyou want" (missing space). After fix: " you want".
+    @Test func fimPreservesWordBoundarySpaceWhenStrippedPartialIsWholeWord() {
+        let ghost = GhostText.build(typed: "I do", raw: "do you want", isFillInMiddle: true)
+        #expect(ghost == " you want", "strip of whole-word partial must preserve the space before continuation")
+        #expect(ghost.hasPrefix(" "), "ghost must lead with space so Tab gives 'I do you want', not 'I doyou want'")
+    }
 }
