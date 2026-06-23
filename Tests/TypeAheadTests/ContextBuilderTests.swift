@@ -113,6 +113,31 @@ import Testing
         #expect(hint == "[Screen: \(String(repeating: "x", count: 120))]")
     }
 
+    /// Garbled OCR output (mostly symbols, < 55% alphanumeric) must NOT be injected.
+    /// This is the "••• Ll8?.G•..." artifact from Electron app UI elements being OCR'd.
+    @Test func screenContextGarbledSymbolsAreFiltered() {
+        let ctx = TextContext(textBeforeCursor: "Hello world", textAfterCursor: "", appName: "Notes", windowTitle: "")
+        // 5 alphanumeric out of 12 total ≈ 42% — below the 55% threshold.
+        let garbled = "••• Ll8?.G•..."
+        let result = ContextBuilder.buildPrompt(
+            context: ctx, clipboard: nil, history: [], customInstructions: "",
+            screenContext: garbled
+        )
+        #expect(!result.contains("[Screen:"), "garbled OCR context must be suppressed")
+        #expect(result == "Hello world")
+    }
+
+    /// Text that's mostly readable (≥ 55% alphanumeric) must still be injected.
+    @Test func screenContextReadableTextIsInjected() {
+        let ctx = TextContext(textBeforeCursor: "Tell me more", textAfterCursor: "", appName: "Notes", windowTitle: "")
+        // "Meeting notes: Q4 plan" — all letters/numbers/spaces → 100% alpha.
+        let result = ContextBuilder.buildPrompt(
+            context: ctx, clipboard: nil, history: [], customInstructions: "",
+            screenContext: "Meeting notes: Q4 plan"
+        )
+        #expect(result.hasPrefix("[Screen: Meeting notes: Q4 plan]"))
+    }
+
     @Test func emptyScreenContextBehavesLikeNil() {
         let ctx = TextContext(textBeforeCursor: "Hello", textAfterCursor: "", appName: "Notes", windowTitle: "")
         let result = ContextBuilder.buildPrompt(context: ctx, clipboard: nil, history: [], customInstructions: "", screenContext: "  ")

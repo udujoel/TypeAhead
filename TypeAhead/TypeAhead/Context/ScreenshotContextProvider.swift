@@ -46,7 +46,18 @@ enum ScreenshotContextProvider {
             let handler = VNImageRequestHandler(cgImage: cgImage)
             try? handler.perform([request])
 
-            let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+            // Filter out low-confidence observations and symbol-heavy lines (OCR artifacts
+            // from app UI controls, icons, or decorative glyphs that produce junk like "•••"
+            // or "Ll8?.G•..." — those garble LLM completions when injected as screen context).
+            let lines = (request.results ?? []).compactMap { obs -> String? in
+                guard let top = obs.topCandidates(1).first,
+                      top.confidence >= 0.4 else { return nil }
+                let s = top.string
+                guard s.count >= 3 else { return nil }
+                let alphaCount = s.filter { $0.isLetter || $0.isNumber || $0 == " " }.count
+                guard Double(alphaCount) / Double(s.count) >= 0.6 else { return nil }
+                return s
+            }
             let joined = lines.joined(separator: " ")
             let trimmed = String(joined.prefix(maxChars))
             return trimmed.isEmpty ? nil : trimmed

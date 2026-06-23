@@ -70,10 +70,16 @@ enum ContextBuilder {
         // Prepend a compact screen-context hint so the model understands the user's topic
         // (e.g. code they're reading, a document they're composing). Capped at 120 chars
         // so small models aren't distracted by lengthy off-task OCR output.
+        // Defense-in-depth garble check: skip the hint when OCR produced mostly symbols
+        // (< 55% alphanumeric) — e.g. icon labels or rendering artifacts that slipped
+        // through ScreenshotContextProvider's per-line filter.
         if let screen = screenContext?.trimmingCharacters(in: .whitespacesAndNewlines),
            !screen.isEmpty {
             let compact = String(screen.prefix(120))
-            return "[Screen: \(compact)]\n\(prefix)"
+            let alphaCount = compact.filter { $0.isLetter || $0.isNumber || $0 == " " }.count
+            if Double(alphaCount) / Double(compact.count) >= 0.55 {
+                return "[Screen: \(compact)]\n\(prefix)"
+            }
         }
         return prefix
     }

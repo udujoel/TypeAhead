@@ -32,6 +32,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     deps.completionOverlay.hide(animated: false)
                 } else if let rect = deps.accessibilityManager.cursorScreenRect() {
                     deps.completionOverlay.update(text: remaining, near: rect)
+                } else {
+                    // Cursor position unavailable — hide rather than leaving overlay at stale position.
+                    deps.keyMonitor.isOverlayVisible = false
+                    deps.completionOverlay.hide(animated: false)
                 }
                 return  // typed along with the suggestion — keep it, no regeneration
             }
