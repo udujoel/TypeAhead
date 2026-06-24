@@ -170,6 +170,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             deps?.completionOverlay.hide(animated: true)  // gentle fade on Escape
         }
 
+        // Global ⌃⌥⌘T opens the status menu at the mouse — the always-works entry point when the
+        // menu-bar icon is hidden by notch/overflow on a crowded menu bar.
+        deps.keyMonitor.onShowMenu = { [weak self] in
+            self?.statusBarMenu?.showMenuAtMouse()
+        }
+
         deps.keyMonitor.start()
 
         // One-time checks. If trusted is false → re-grant in System Settings. If a debugger

@@ -40,7 +40,27 @@ final class StatusBarMenu: NSObject, NSMenuDelegate {
         // Diagnostic so we can confirm from logs that THIS build's menu installed and is visible
         // (vs. a stale build, or the icon being hidden behind the notch / a crowded menu bar).
         let hasButton = statusItem.button != nil
-        print("📊 StatusBarMenu installed — button=\(hasButton) visible=\(statusItem.isVisible) items=\(menu.items.count) (rich menu v2)")
+        print("📊 StatusBarMenu installed — button=\(hasButton) visible=\(statusItem.isVisible) items=\(menu.items.count) (rich menu v3 + ⌃⌥⌘T)")
+
+        // After layout settles, report whether macOS actually placed the icon in a menu-bar
+        // window. windowAttached=false with visible=true is the signature of notch/overflow
+        // hiding — the icon exists but has no on-screen slot. The ⌃⌥⌘T shortcut covers that case.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1))
+            let attached = self.statusItem.button?.window != nil
+            let w = Int(self.statusItem.button?.frame.width ?? 0)
+            print("📊 StatusBarMenu post-launch — windowAttached=\(attached) buttonWidth=\(w) (if false: icon hidden by overflow — use ⌃⌥⌘T)")
+        }
+    }
+
+    /// Opens the full status menu at the current mouse location — the escape hatch for when the
+    /// menu-bar icon is hidden behind the notch on a crowded menu bar. Wired to the global ⌃⌥⌘T
+    /// shortcut. Builds a fresh menu so it never conflicts with the one owned by `statusItem`.
+    func showMenuAtMouse() {
+        NSApp.activate(ignoringOtherApps: true)
+        let popup = NSMenu()
+        rebuild(popup)
+        popup.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
     // MARK: - Status-item button (must never become invisible)
