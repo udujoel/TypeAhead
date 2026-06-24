@@ -3,12 +3,18 @@ import ScreenCaptureKit
 import Vision
 
 enum ScreenshotContextProvider {
-    static func captureActiveWindow() async -> NSImage? {
+    /// Captures the frontmost app's front window. Returns both the image and the window's
+    /// `frame` (Quartz/SCKit global, TOP-left origin) — the Vision caret path maps OCR boxes
+    /// against the region that was *actually captured* rather than a separately-measured AX
+    /// frame, which removes any drift between the two coordinate sources.
+    static func captureActiveWindow() async -> (image: NSImage, topLeftFrame: CGRect)? {
         // Make sure the user has granted screen capture permission
         guard CGPreflightScreenCaptureAccess() else { return nil }
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
 
-        // Ask ScreenCaptureKit for the list of windows currently on screen
+        // Ask ScreenCaptureKit for the list of windows currently on screen. `content.windows` is
+        // ordered front-to-back, so the first window owned by the app is its frontmost (focused)
+        // one — the same window AX reports as focused.
         guard let content = try? await SCShareableContent
             .excludingDesktopWindows(false, onScreenWindowsOnly: true) else { return nil }
 
@@ -27,7 +33,8 @@ enum ScreenshotContextProvider {
             configuration: config
         ) else { return nil }
 
-        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        let image = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        return (image, window.frame)
     }
 
     /// Captures the frontmost window and runs fast OCR via Vision.
@@ -35,8 +42,8 @@ enum ScreenshotContextProvider {
     /// the user's current topic without inflating the prompt with off-task content.
     /// The OCR runs on a background thread so the main actor is not blocked.
     static func captureAndExtractText(maxChars: Int = 200) async -> String? {
-        guard let image = await captureActiveWindow() else { return nil }
-        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        guard let captured = await captureActiveWindow() else { return nil }
+        guard let cgImage = captured.image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
 
         return await Task.detached(priority: .userInitiated) {
             let request = VNRecognizeTextRequest()

@@ -19,7 +19,7 @@ final class AccessibilityManager {
     /// Wires the focused-window capture used by Vision caret detection. Called once from the
     /// app side (`AppDependencies`) so the ScreenCaptureKit dependency stays out of the test
     /// target. Until called, unreliable-app placement uses the pinned bar only.
-    func enableVisionCapture(_ capture: @escaping () async -> NSImage?) {
+    func enableVisionCapture(_ capture: @escaping () async -> (image: NSImage, topLeftFrame: CGRect)?) {
         caretLocator.captureWindow = capture
     }
 
