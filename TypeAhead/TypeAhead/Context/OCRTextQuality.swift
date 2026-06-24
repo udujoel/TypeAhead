@@ -54,6 +54,10 @@ enum OCRTextQuality {
         let alphaCount = trimmed.filter { $0.isLetter || $0.isNumber || $0 == " " }.count
         guard Double(alphaCount) / Double(trimmed.count) >= 0.55 else { return false }
 
+        // Real-word guard: genuine context contains at least one proper word. Junk fragments
+        // like "PR.T ?1SF" (longest letter run = 2) carry no usable signal — reject them.
+        guard longestLetterRun(in: trimmed) >= 4 else { return false }
+
         // Letter-garble guard.
         let tokens = trimmed.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\t" }).map(String.init)
         guard !tokens.isEmpty else { return false }
@@ -61,5 +65,19 @@ enum OCRTextQuality {
         if garbled >= 2 { return false }
         if Double(garbled) / Double(tokens.count) > 0.25 { return false }
         return true
+    }
+
+    /// Length of the longest run of consecutive letters — a cheap proxy for "contains a real word".
+    static func longestLetterRun(in text: String) -> Int {
+        var longest = 0, current = 0
+        for ch in text {
+            if ch.isLetter {
+                current += 1
+                longest = max(longest, current)
+            } else {
+                current = 0
+            }
+        }
+        return longest
     }
 }

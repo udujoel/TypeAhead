@@ -32,6 +32,11 @@ import Testing
         #expect(!OCRTextQuality.isLikelyReadable("••• Ll8?.G•..."))
     }
 
+    @Test func shortFragmentWithNoRealWordIsRejected() {
+        // Real captured Teams-UI fragment: no token has a 4+ letter run, so it's noise.
+        #expect(!OCRTextQuality.isLikelyReadable("PR.T ?1SF"))
+    }
+
     @Test func emptyOrWhitespaceIsRejected() {
         #expect(!OCRTextQuality.isLikelyReadable(""))
         #expect(!OCRTextQuality.isLikelyReadable("   \n  "))
