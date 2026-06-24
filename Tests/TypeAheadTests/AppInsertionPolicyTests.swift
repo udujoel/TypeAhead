@@ -86,4 +86,26 @@ import Testing
     @Test func unknownBundleIDDefaultsToAX() {
         #expect(AppInsertionPolicy.preferredMethod(forBundleID: "com.example.UnknownApp") == .ax)
     }
+
+    // MARK: - Unreliable caret bounds (Electron/Chromium)
+
+    @Test func teamsHasUnreliableCaretBounds() {
+        #expect(AppInsertionPolicy.unreliableCaretBounds(forBundleID: "com.microsoft.teams2"))
+    }
+
+    @Test func claudeDesktopHasUnreliableCaretBounds() {
+        #expect(AppInsertionPolicy.unreliableCaretBounds(forBundleID: "com.anthropic.claudefordesktop"))
+    }
+
+    @Test func slackHasUnreliableCaretBounds() {
+        #expect(AppInsertionPolicy.unreliableCaretBounds(forBundleID: "com.tinyspeck.slackmacgap"))
+    }
+
+    @Test func textEditHasReliableCaretBounds() {
+        #expect(!AppInsertionPolicy.unreliableCaretBounds(forBundleID: "com.apple.TextEdit"))
+    }
+
+    @Test func emptyBundleIDHasReliableCaretBounds() {
+        #expect(!AppInsertionPolicy.unreliableCaretBounds(forBundleID: ""))
+    }
 }

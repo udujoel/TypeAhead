@@ -12,7 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let deps = AppDependencies.shared
         statusBarMenu = StatusBarMenu(
             settings: deps.settings,
-            pipeline: deps.completionPipeline
+            pipeline: deps.completionPipeline,
+            modelManager: deps.modelManager,
+            historyStore: deps.historyStore
         )
 
         // Keystroke handling with "type-through": if the user types the next character of
@@ -32,6 +34,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     deps.completionOverlay.hide(animated: false)
                 } else if let rect = deps.accessibilityManager.cursorScreenRect() {
                     deps.completionOverlay.update(text: remaining, near: rect)
+                } else {
+                    // Cursor position unavailable — hide rather than leaving overlay at stale position.
+                    deps.keyMonitor.isOverlayVisible = false
+                    deps.completionOverlay.hide(animated: false)
                 }
                 return  // typed along with the suggestion — keep it, no regeneration
             }
@@ -162,6 +168,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             deps?.keyMonitor.isOverlayVisible = false
             deps?.inferenceEngine.cancelCurrent()
             deps?.completionOverlay.hide(animated: true)  // gentle fade on Escape
+        }
+
+        // Global ⌃⌥⌘T opens the status menu at the mouse — the always-works entry point when the
+        // menu-bar icon is hidden by notch/overflow on a crowded menu bar.
+        deps.keyMonitor.onShowMenu = { [weak self] in
+            self?.statusBarMenu?.showMenuAtMouse()
         }
 
         deps.keyMonitor.start()

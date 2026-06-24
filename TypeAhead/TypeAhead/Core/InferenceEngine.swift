@@ -153,17 +153,18 @@ final class InferenceEngine {
 
                 let stream = try await container.generate(input: input, parameters: params)
                 var raw = ""
+                var lastGhost = ""
 
                 for await generation in stream {
                     if Task.isCancelled { break }
                     if case .chunk(let text) = generation {
                         raw += text
                         let ghost = InferenceEngine.ghostText(typed: prompt, raw: raw, isFillInMiddle: true, maxWords: maxWords)
-                        if !ghost.isEmpty { onUpdate(ghost) }
+                        if !ghost.isEmpty { lastGhost = ghost; onUpdate(ghost) }
                     }
                 }
 
-                print("🧠 raw='\(raw.prefix(120))' → ghost='\(InferenceEngine.ghostText(typed: prompt, raw: raw, isFillInMiddle: true, maxWords: maxWords).prefix(80))'")
+                print("🧠 raw='\(raw.prefix(120))' → ghost='\(lastGhost.prefix(80))'")
             } catch {
                 print("⚠️ InferenceEngine: generation error: \(error)")
             }

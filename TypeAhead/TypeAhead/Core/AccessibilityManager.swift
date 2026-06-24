@@ -13,6 +13,16 @@ final class AccessibilityManager {
     /// Apps we've already asked to enable their accessibility tree (Chromium/Electron).
     private var coaxedPIDs = Set<pid_t>()
 
+    /// Vision-based caret locator for apps with unreliable AX caret bounds.
+    private let caretLocator = CaretLocator()
+
+    /// Wires the focused-window capture used by Vision caret detection. Called once from the
+    /// app side (`AppDependencies`) so the ScreenCaptureKit dependency stays out of the test
+    /// target. Until called, unreliable-app placement uses the pinned bar only.
+    func enableVisionCapture(_ capture: @escaping () async -> NSImage?) {
+        caretLocator.captureWindow = capture
+    }
+
     /// Whether this process currently holds Accessibility permission. If false, all AX
     /// reads fail and we fall back to the keystroke buffer + mouse position. Rebuilding
     /// in Xcode changes the binary and silently revokes this, so it must be re-granted.
@@ -129,6 +139,15 @@ final class AccessibilityManager {
             insertCompletion(replacement, into: element)
             return
         }
+        // cgEvent apps (Electron/Chromium) don't honor AX writes reliably: a selection-set can
+        // return .success but silently no-op, after which insertCompletion's injectText appends
+        // the replacement WITHOUT the old word being selected/deleted → garbled ("recievereceive").
+        // Skip the AX-selection path for these apps and delete via synthetic backspaces directly.
+        let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        if AppInsertionPolicy.preferredMethod(forBundleID: bundleID) == .cgEvent {
+            injectReplacement(replacement, deletingCount: wordLength)
+            return
+        }
         // Select the partial word by moving the selection backwards.
         if let current = element.selectedRange {
             let replaceStart = max(0, current.location - wordLength)
@@ -181,27 +200,71 @@ final class AccessibilityManager {
         return size
     }
 
+    /// The AX caret rect in Cocoa screen coords, only if finite, sane, and on a screen; else nil.
+    private func onScreenAXCaretRect() -> NSRect? {
+        guard let element = focusedTextElement(), let axRect = axCursorRect(for: element),
+              axRect.origin.x.isFinite, axRect.origin.y.isFinite,
+              axRect.height > 0, axRect.width < 100_000, axRect.height < 100_000 else { return nil }
+        // AX/Quartz coords are global, TOP-left origin (Y down). Flip to Cocoa global
+        // (BOTTOM-left, Y up) around the menu-bar screen's height (screens[0]).
+        let menuBarHeight = NSScreen.screens.first?.frame.maxY ?? NSScreen.main?.frame.maxY ?? 0
+        let flippedY = menuBarHeight - axRect.maxY
+        let cocoaRect = NSRect(x: axRect.origin.x, y: flippedY, width: axRect.width, height: axRect.height)
+        guard OverlayPositioner.isOnScreen(cocoaRect, screenFrames: NSScreen.screens.map(\.frame)) else { return nil }
+        return cocoaRect
+    }
+
     func cursorScreenRect() -> NSRect? {
-        if let element = focusedTextElement(), let axRect = axCursorRect(for: element),
-           axRect.origin.x.isFinite, axRect.origin.y.isFinite,
-           axRect.height > 0, axRect.width < 100_000, axRect.height < 100_000 {
-            // AX/Quartz coords are global, TOP-left origin (Y down). Flip to Cocoa global
-            // (BOTTOM-left, Y up) around the menu-bar screen's height (screens[0]).
-            let menuBarHeight = NSScreen.screens.first?.frame.maxY ?? NSScreen.main?.frame.maxY ?? 0
-            let flippedY = menuBarHeight - axRect.maxY
-            let cocoaRect = NSRect(x: axRect.origin.x, y: flippedY, width: axRect.width, height: axRect.height)
-            // Electron/Chromium fields (Teams, Slack, Claude desktop) sometimes answer on the
-            // AX path but report caret bounds that map OFF every screen (e.g. -2427,-139). The
-            // overlay would faithfully render off-screen. Trust the rect only when it actually
-            // lands on a screen; otherwise fall through to the mouse-anchored last resort.
-            if OverlayPositioner.isOnScreen(cocoaRect, screenFrames: NSScreen.screens.map(\.frame)) {
-                return cocoaRect
+        let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        let unreliable = AppInsertionPolicy.unreliableCaretBounds(forBundleID: bundleID)
+        let axRect = onScreenAXCaretRect()
+
+        // Reliable apps: trust the AX caret directly (native AppKit/UIKit is accurate + fast).
+        if !unreliable {
+            if let axRect {
+                print("🎯 caret reliable[\(bundleID)] AX=\(rectStr(axRect))")
+                return axRect
             }
+            let mouse = NSEvent.mouseLocation
+            print("🎯 caret reliable[\(bundleID)] AX=nil → mouse=(\(Int(mouse.x)),\(Int(mouse.y)))")
+            return NSRect(x: mouse.x, y: mouse.y - 24, width: 0, height: 20)
         }
-        // AX unavailable or caret off-screen — position overlay near the mouse cursor
-        // (already Cocoa coords). Keeps the ghost on-screen near where the user is working.
+
+        // Unreliable apps (Electron/Chromium): vision → AX caret → pinned bar → mouse. AX stays
+        // as a rung — its rect is usually near the text even when its X lags, which beats the
+        // window-corner pinned bar.
+        let windowFrame = focusedWindowScreenFrame()
+        if let windowFrame, let element = focusedTextElement(), let value = element.stringValue {
+            caretLocator.refresh(trailingText: String(value.suffix(40)), windowFrame: windowFrame)
+        }
+        if let windowFrame, let anchor = caretLocator.freshAnchor(forWindow: windowFrame),
+           OverlayPositioner.isOnScreen(anchor, screenFrames: NSScreen.screens.map(\.frame)) {
+            print("🎯 caret unreliable[\(bundleID)] VISION=\(rectStr(anchor))")
+            return anchor
+        }
+        // Stale Vision anchor (TTL expired but same window): still pixel-accurate from a real
+        // OCR scan — far better than the hardcoded window-corner PINNED bar.
+        if let windowFrame, let anchor = caretLocator.staleAnchor(forWindow: windowFrame),
+           OverlayPositioner.isOnScreen(anchor, screenFrames: NSScreen.screens.map(\.frame)) {
+            print("🎯 caret unreliable[\(bundleID)] VISION_STALE=\(rectStr(anchor))")
+            return anchor
+        }
+        if let axRect {
+            print("🎯 caret unreliable[\(bundleID)] AX=\(rectStr(axRect)) (no vision; window=\(windowFrame.map(rectStr) ?? "nil"))")
+            return axRect
+        }
+        if let windowFrame {
+            let pinned = OverlayPositioner.pinnedOrigin(windowFrame: windowFrame, panelSize: NSSize(width: 1, height: 20))
+            print("🎯 caret unreliable[\(bundleID)] PINNED=(\(Int(pinned.x)),\(Int(pinned.y))) window=\(rectStr(windowFrame)) (no vision, no AX)")
+            return NSRect(origin: pinned, size: NSSize(width: 0, height: 20))
+        }
         let mouse = NSEvent.mouseLocation
+        print("🎯 caret unreliable[\(bundleID)] → mouse=(\(Int(mouse.x)),\(Int(mouse.y))) (no vision/AX/window)")
         return NSRect(x: mouse.x, y: mouse.y - 24, width: 0, height: 20)
+    }
+
+    private func rectStr(_ r: NSRect) -> String {
+        "(\(Int(r.origin.x)),\(Int(r.origin.y)) \(Int(r.width))×\(Int(r.height)))"
     }
 
     // MARK: - CGEvent text injection
@@ -294,6 +357,35 @@ final class AccessibilityManager {
         var role: CFTypeRef?
         AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
         return (role as? String) == "AXPasswordField"
+    }
+
+    /// The focused window's frame in Cocoa screen coordinates (bottom-left origin), or nil if
+    /// AX can't supply it. Used to pin the overlay above the window's input when the caret rect
+    /// is untrustworthy. AX reports top-left origin; we flip around the menu-bar screen height.
+    func focusedWindowScreenFrame() -> NSRect? {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(axApp, 2.0)
+        var windowRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &windowRef) == .success,
+              let window = windowRef else { return nil }
+        let win = window as! AXUIElement
+
+        var posRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(win, kAXPositionAttribute as CFString, &posRef) == .success,
+              AXUIElementCopyAttributeValue(win, kAXSizeAttribute as CFString, &sizeRef) == .success,
+              let posRef, let sizeRef else { return nil }
+
+        var origin = CGPoint.zero
+        var size = CGSize.zero
+        AXValueGetValue(posRef as! AXValue, .cgPoint, &origin)
+        AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+        guard size.width > 0, size.height > 0, origin.x.isFinite, origin.y.isFinite else { return nil }
+
+        let menuBarHeight = NSScreen.screens.first?.frame.maxY ?? NSScreen.main?.frame.maxY ?? 0
+        let flippedY = menuBarHeight - (origin.y + size.height)
+        return NSRect(x: origin.x, y: flippedY, width: size.width, height: size.height)
     }
 
     private func focusedWindowTitle() -> String? {

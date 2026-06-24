@@ -70,10 +70,15 @@ enum ContextBuilder {
         // Prepend a compact screen-context hint so the model understands the user's topic
         // (e.g. code they're reading, a document they're composing). Capped at 120 chars
         // so small models aren't distracted by lengthy off-task OCR output.
+        // Defense-in-depth: skip the hint when the OCR text reads as garble (symbol soup or
+        // letter-substitution junk) that slipped through ScreenshotContextProvider's filter —
+        // contaminated context hurts completions more than missing context helps.
         if let screen = screenContext?.trimmingCharacters(in: .whitespacesAndNewlines),
            !screen.isEmpty {
             let compact = String(screen.prefix(120))
-            return "[Screen: \(compact)]\n\(prefix)"
+            if OCRTextQuality.isLikelyReadable(compact) {
+                return "[Screen: \(compact)]\n\(prefix)"
+            }
         }
         return prefix
     }

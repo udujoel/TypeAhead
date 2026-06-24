@@ -46,10 +46,21 @@ enum ScreenshotContextProvider {
             let handler = VNImageRequestHandler(cgImage: cgImage)
             try? handler.perform([request])
 
-            let lines = (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+            // Filter out low-confidence observations and OCR garble (symbol soup AND
+            // letter-substitution junk like "SIiow4(s Liie aciive 1110(Ael") that would
+            // otherwise poison the completion prompt. See OCRTextQuality for the heuristics.
+            let lines = (request.results ?? []).compactMap { obs -> String? in
+                guard let top = obs.topCandidates(1).first,
+                      top.confidence >= 0.4 else { return nil }
+                let s = top.string
+                guard s.count >= 3, OCRTextQuality.isLikelyReadable(s) else { return nil }
+                return s
+            }
             let joined = lines.joined(separator: " ")
             let trimmed = String(joined.prefix(maxChars))
-            return trimmed.isEmpty ? nil : trimmed
+            // Final guard on the assembled text: even if individual lines pass, the joined
+            // result must read as real text before we hand it to the model.
+            return OCRTextQuality.isLikelyReadable(trimmed) ? trimmed : nil
         }.value
     }
 }

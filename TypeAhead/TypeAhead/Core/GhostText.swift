@@ -19,11 +19,20 @@ enum GhostText {
         guard !cleaned.isEmpty else { return "" }
 
         var continuation: String
+        var didStrip = false
+        var stripProducedLeadingSpace = false
         if isFillInMiddle {
             // The output is the continuation. Keep only the current line — the model
             // often runs on into new sentences/lines we don't want inline.
             let firstLine = cleaned.prefix { $0 != "\n" }
             continuation = normalizeWhitespace(String(firstLine))
+            // Guard against the model restating the partial current word (→ "woworking").
+            let beforeStrip = continuation
+            continuation = stripCurrentWordRestatement(typed: typed, continuation: continuation)
+            didStrip = continuation != beforeStrip
+            // When the stripped partial is itself a word (e.g. "do" from "do you want"),
+            // the remaining text starts with a space (" you want"). Record before tidy() removes it.
+            stripProducedLeadingSpace = didStrip && continuation.hasPrefix(" ")
         } else {
             continuation = alignedContinuation(typed: typed, output: cleaned)
         }
@@ -33,14 +42,25 @@ enum GhostText {
             continuation = clampWords(continuation, maxWords)
         }
 
+        // Restore the word-boundary space that tidy() consumed when stripCurrentWordRestatement
+        // produced it. E.g. typed="I do", raw="do you want" → strip → " you want" → tidy →
+        // "you want" → ghost "I doyou want" ✗. didStrip=true prevents rawBeginsNewWord from
+        // re-adding the space, so we restore it explicitly here.
+        if stripProducedLeadingSpace, !continuation.isEmpty, !endsWithWhitespace(typed) {
+            continuation = " " + continuation
+        }
+
         // Preserve the word separator. If the model started a NEW word (its raw output
         // began with whitespace) and the text before the cursor doesn't already end with
         // a space, prepend one — so "work" + "for" reads "work for", not "workfor". When
         // the model continues the current word ("wor" + "king"), no space is added.
         // Exception: closing/terminal punctuation attaches directly without a leading space
         // ("How are you" + "?" should give "?" not " ?").
-        if !continuation.isEmpty, isFillInMiddle, rawBeginsNewWord(raw), !endsWithWhitespace(typed),
-           !startsWithClosingPunctuation(continuation) {
+        // Exception: when stripCurrentWordRestatement stripped a restatement, the continuation
+        // is a word suffix (not a new word) — the leading-space check must not fire even if the
+        // original raw happened to start with whitespace.
+        if !continuation.isEmpty, isFillInMiddle, !didStrip, rawBeginsNewWord(raw),
+           !endsWithWhitespace(typed), !startsWithClosingPunctuation(continuation) {
             continuation = " " + continuation
         }
 
@@ -71,6 +91,27 @@ enum GhostText {
 
     private static func endsWithWhitespace(_ s: String) -> Bool {
         s.last.map { $0 == " " || $0 == "\n" || $0 == "\t" } ?? true
+    }
+
+    /// The partial word currently being typed: the trailing run of non-whitespace characters
+    /// before the cursor. Empty when the text ends with whitespace (not mid-word).
+    static func currentPartialWord(_ typed: String) -> String {
+        String(typed.reversed().prefix { $0 != " " && $0 != "\n" && $0 != "\t" }.reversed())
+    }
+
+    /// In fill-in-middle mode the model should emit only the text AFTER the cursor, but small
+    /// models sometimes restate the partial word the user is mid-typing (typed "wo", model
+    /// emits "working") — inserting that verbatim duplicates the prefix ("woworking"). When the
+    /// user is mid-word and the continuation begins with the current partial word, drop that
+    /// overlap. Skips single-character partials (too risky — could merge a legitimate new word).
+    static func stripCurrentWordRestatement(typed: String, continuation: String) -> String {
+        guard !continuation.isEmpty, !endsWithWhitespace(typed) else { return continuation }
+        let partial = currentPartialWord(typed)
+        guard partial.count >= 2 else { return continuation }
+        if continuation.lowercased().hasPrefix(partial.lowercased()) {
+            return String(continuation.dropFirst(partial.count))
+        }
+        return continuation
     }
 
     /// Keeps at most `maxWords` space-separated words.

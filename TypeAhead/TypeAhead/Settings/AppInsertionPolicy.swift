@@ -29,6 +29,33 @@ enum AppInsertionPolicy {
         return .ax
     }
 
+    /// Whether the given app reports an unreliable AX caret rect (Chromium/Electron render
+    /// their own text, so `kAXBoundsForRange` is often frozen / wrong even on the [AX] path).
+    /// Such apps skip the AX caret coordinate and use the Vision → pinned escalation ladder.
+    static func unreliableCaretBounds(forBundleID bundleID: String) -> Bool {
+        for prefix in unreliableCaretPrefixes where bundleID.hasPrefix(prefix) {
+            return true
+        }
+        return false
+    }
+
+    // Bundle-ID prefixes whose AX caret bounds cannot be trusted for overlay placement.
+    private static let unreliableCaretPrefixes: [String] = [
+        "com.google.Chrome",
+        "com.microsoft.edgemac",
+        "com.microsoft.teams",
+        "com.microsoft.VSCode",
+        "com.tinyspeck.slackmacgap",
+        "com.hnc.Discord",
+        "com.anthropic.claudefordesktop",
+        "md.obsidian",
+        "notion.id",
+        "com.figma.Desktop",
+        "com.linearapp.linear",
+        "io.cursor.Cursor",
+        "com.todesktop.",
+    ]
+
     // MARK: - Known CGEvent apps
 
     // Apps confirmed to reject AX kAXSelectedTextAttribute insertion.

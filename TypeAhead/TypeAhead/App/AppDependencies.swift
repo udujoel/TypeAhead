@@ -19,7 +19,13 @@ final class AppDependencies {
     }
     let keyMonitor = KeyEventMonitor()
 
-    private var screenContextCache: (text: String, at: Date)?
+    init() {
+        // Wire on-device Vision caret detection for Electron/Chromium apps with unreliable AX
+        // caret bounds. Capture lives here so the ScreenCaptureKit dependency stays app-only.
+        accessibilityManager.enableVisionCapture { await ScreenshotContextProvider.captureActiveWindow() }
+    }
+
+    private var screenContextCache: (text: String, at: Date, bundleID: String)?
     private let screenContextCacheTTL: TimeInterval = 2.0
 
     /// Non-zero when the overlay shows a spelling correction rather than an ML completion.
@@ -101,12 +107,15 @@ final class AppDependencies {
         // Cache for 2s so rapid keystrokes don't re-capture on every completion.
         let screenContext: String?
         if settings.useScreenshotContext {
-            if let cache = screenContextCache, Date().timeIntervalSince(cache.at) < screenContextCacheTTL {
+            let currentBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+            if let cache = screenContextCache,
+               Date().timeIntervalSince(cache.at) < screenContextCacheTTL,
+               cache.bundleID == currentBundleID {
                 screenContext = cache.text
             } else {
                 let extracted = await ScreenshotContextProvider.captureAndExtractText()
                 screenContext = extracted
-                if let text = extracted { screenContextCache = (text, Date()) }
+                screenContextCache = extracted.map { (text: $0, at: Date(), bundleID: currentBundleID) }
             }
         } else {
             screenContext = nil

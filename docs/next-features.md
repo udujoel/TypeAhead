@@ -437,6 +437,13 @@ as new apps are used; pre-seeded exclusions ship out of the box.
 > `NSScreen`; `cursorScreenRect()` falls through to the mouse anchor instead of rendering the
 > ghost off-screen. `inlineOrigin` now clamps both X edges so a near-edge anchor stays visible.
 > Deferred: Vision-based caret detection (rung 3) and per-app unreliable-bounds marking.
+>
+> **Second-wave shipped** (branch `feature/vision-caret-alignment`): full escalation ladder —
+> for Electron/Chromium apps (`AppInsertionPolicy.unreliableCaretBounds`) the AX caret is
+> skipped in favour of `CaretLocator` (on-device Vision OCR of the focused window via
+> `CaretGeometry`, throttled/cached) with an `OverlayPositioner.pinnedOrigin` bar above the
+> window's input as the always-readable floor. Also fixed Tab word-completion doubling
+> (`woworking`) via `GhostText.stripCurrentWordRestatement`.
 
 **Problem.** In Microsoft Teams (and other Electron chat apps), the ghost suggestion does not
 appear on the same line as the text being typed — it renders off-screen or not at all, even

@@ -78,6 +78,9 @@ final class KeyEventMonitor {
     var onTabPressed: (() -> Void)?
     var onShiftTabPressed: (() -> Void)?
     var onDismiss: (() -> Void)?
+    /// Fired on the global ⌃⌥⌘T shortcut — opens the status menu even when its menu-bar icon
+    /// is hidden (notch overflow), so the app is always reachable.
+    var onShowMenu: (() -> Void)?
 
     // MARK: Private
 
@@ -196,6 +199,14 @@ final class KeyEventMonitor {
         }
 
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+
+        // Global ⌃⌥⌘T — open the status menu regardless of icon visibility. Matches only when
+        // Control+Option+Command are the exact modifiers (no Shift), so it can't be hit by accident.
+        let menuMods = event.flags.intersection([.maskShift, .maskCommand, .maskControl, .maskAlternate])
+        if keyCode == CGKeyCode(kVK_ANSI_T), menuMods == [.maskControl, .maskAlternate, .maskCommand] {
+            Task { @MainActor [weak self] in self?.onShowMenu?() }
+            return nil  // swallowed — the target app never sees this combo
+        }
 
         // Tab — swallow and accept completion when overlay is up.
         if keyCode == CGKeyCode(kVK_Tab) {
