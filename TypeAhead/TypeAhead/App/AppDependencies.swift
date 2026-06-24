@@ -219,6 +219,10 @@ final class AppDependencies {
 
         guard let cursorRect = accessibilityManager.cursorScreenRect() else { return }
         let fontSize = accessibilityManager.focusedFontSize()
+        // Snapshot the epoch this generation belongs to (set at the top, before the awaits above).
+        // The onUpdate hop below runs on a *later* main-actor turn, so a focus change can land in
+        // between — guard the paint on the epoch so a stale ghost can't flash in the new field.
+        let generationEpoch = suggestionEpoch
         print("⌨️ [\(source)] prompt='\(prompt.suffix(60))' suffix='\(suffix.prefix(40))' persona=\(personaNote != nil) cursor=\(cursorRect)")
 
         inferenceEngine.complete(
@@ -231,6 +235,10 @@ final class AppDependencies {
             // Called on the model executor — hop to main to touch UI.
             Task { @MainActor [weak self] in
                 guard let self, !full.isEmpty else { return }
+                // Focus moved since this generation started (handleFocusChange bumped the epoch and
+                // already hid the overlay). This callback was scheduled before that and would
+                // otherwise re-show the prior field's suggestion in the new one. Drop it.
+                guard focusEpoch.mayAccept(stampedEpoch: generationEpoch) else { return }
                 if keyMonitor.isOverlayVisible, !completionOverlay.currentText.isEmpty {
                     completionOverlay.update(text: full, near: cursorRect)
                 } else {
