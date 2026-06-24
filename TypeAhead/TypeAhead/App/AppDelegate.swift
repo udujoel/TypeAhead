@@ -12,7 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let deps = AppDependencies.shared
         statusBarMenu = StatusBarMenu(
             settings: deps.settings,
-            pipeline: deps.completionPipeline
+            pipeline: deps.completionPipeline,
+            modelManager: deps.modelManager,
+            historyStore: deps.historyStore
         )
 
         // Keystroke handling with "type-through": if the user types the next character of
