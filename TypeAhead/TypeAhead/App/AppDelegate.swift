@@ -85,6 +85,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
+            // Acceptance guardrail: never insert a suggestion into a field different from the one
+            // it was generated for. If focus drifted since the ghost was shown, the epoch moved on
+            // — drop the accept rather than paste into the wrong place.
+            guard deps.focusEpoch.mayAccept(stampedEpoch: deps.suggestionEpoch) else {
+                deps.keyMonitor.isOverlayVisible = false
+                deps.completionOverlay.hide(animated: false)
+                return
+            }
+
             // Spelling correction: replace the misspelled word with the ghost suggestion.
             if deps.spellCorrectionLength > 0 {
                 let len = deps.spellCorrectionLength

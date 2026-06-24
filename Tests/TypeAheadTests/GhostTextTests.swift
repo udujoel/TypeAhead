@@ -171,6 +171,49 @@ import Testing
 
 // MARK: - Ghost quality gate
 
+@Suite struct GhostTextStreamingStopTests {
+    // The overlay only ever shows the first line, capped at `maxWords`. Once the model has
+    // produced a complete first line (a newline after real content) or more than `maxWords`
+    // words, further tokens can't change the display — so streaming can stop early (snappier,
+    // less battery). These pin that pure decision.
+
+    @Test func doesNotStopOnEmptyOutput() {
+        #expect(GhostText.shouldStopStreaming(raw: "", maxWords: 4) == false)
+        #expect(GhostText.shouldStopStreaming(raw: "   ", maxWords: 4) == false)
+    }
+
+    @Test func doesNotStopMidFirstLine() {
+        #expect(GhostText.shouldStopStreaming(raw: "going to the", maxWords: 4) == false)
+    }
+
+    @Test func stopsWhenFirstLineCompletesWithNewline() {
+        // Real content followed by a newline — the displayed first line is final.
+        #expect(GhostText.shouldStopStreaming(raw: "going to the store\nand then", maxWords: 20) == true)
+    }
+
+    @Test func doesNotStopOnLeadingNewlinesBeforeContent() {
+        // Small models often emit a blank line or two before any real words. A newline that
+        // precedes all content must NOT stop us — we have nothing to show yet.
+        #expect(GhostText.shouldStopStreaming(raw: "\n\nHello", maxWords: 20) == false)
+    }
+
+    @Test func stopsWhenWordCapExceeded() {
+        // 5 words on the first line with maxWords 4 — the first 4 are complete, the rest is clamped.
+        #expect(GhostText.shouldStopStreaming(raw: "one two three four five", maxWords: 4) == true)
+    }
+
+    @Test func doesNotStopAtExactWordCap() {
+        // Exactly maxWords words and no trailing boundary — the last word may still be growing
+        // ("four" → "fourteen"), so keep streaming until a further word or newline arrives.
+        #expect(GhostText.shouldStopStreaming(raw: "one two three four", maxWords: 4) == false)
+    }
+
+    @Test func noWordCapWhenMaxWordsZero() {
+        // maxWords == 0 means "no cap" — only a completed first line stops streaming.
+        #expect(GhostText.shouldStopStreaming(raw: "one two three four five six seven", maxWords: 0) == false)
+    }
+}
+
 @Suite struct GhostTextQualityTests {
 
     @Test func rejectsLoneBackslash() {

@@ -19,10 +19,46 @@ final class AppDependencies {
     }
     let keyMonitor = KeyEventMonitor()
 
+    /// Bumps whenever focus moves to a different app/field. Guards against off-topic suggestions:
+    /// stale context is dropped on a change, and a suggestion stamped with an earlier epoch can't
+    /// be accepted into a different field. See `handleFocusChange()` / `suggestionEpoch`.
+    let focusEpoch = FocusEpoch()
+
+    /// The epoch the currently-shown suggestion was generated in. `onTabPressed` refuses to insert
+    /// it once `focusEpoch` has moved past this (focus drifted to another field).
+    var suggestionEpoch: Int = 0
+
     init() {
         // Wire on-device Vision caret detection for Electron/Chromium apps with unreliable AX
         // caret bounds. Capture lives here so the ScreenCaptureKit dependency stays app-only.
         accessibilityManager.enableVisionCapture { await ScreenshotContextProvider.captureActiveWindow() }
+
+        // Reset context the moment the user switches apps, so text typed in one app can't leak
+        // into a suggestion for the next. (Field switches *within* an app are caught on the
+        // completion path via `AccessibilityManager.focusedElementChanged()`.) The notification
+        // is delivered on the main queue; hop onto the main actor via the shared singleton to stay
+        // Swift-6 concurrency-clean without capturing non-Sendable `self`.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            Task { @MainActor in AppDependencies.shared.handleFocusChange() }
+        }
+    }
+
+    /// Drop stale context when focus moves to a different app/field: clear the keystroke buffer so
+    /// a previous field's text can't leak into the next suggestion, cancel any in-flight
+    /// generation, hide the ghost, and bump the focus epoch (so a suggestion made for the old
+    /// field can't be accepted into the new one).
+    func handleFocusChange() {
+        keyMonitor.keystrokeBuffer.clear()
+        inferenceEngine.cancelCurrent()
+        if keyMonitor.isOverlayVisible {
+            keyMonitor.isOverlayVisible = false
+            completionOverlay.hide(animated: false)
+        }
+        focusEpoch.focusChanged()
     }
 
     private var screenContextCache: (text: String, at: Date, bundleID: String)?
@@ -45,6 +81,25 @@ final class AppDependencies {
            settings.exceptionList.isExcluded(bundleID: bundleID) {
             return
         }
+
+        // Focus hygiene: if the user moved to a different field since the last cycle, drop stale
+        // context (buffer/overlay/in-flight generation) before building a new prompt — otherwise a
+        // previous field's text leaks in and the model goes off-topic. App switches are handled
+        // separately by the NSWorkspace observer; this catches field switches *within* one app.
+        //
+        // Gated to reliable-AX apps: native AppKit/UIKit apps return a stable AX element ref for
+        // the same field (CFEqual holds across reads), but Electron/Chromium apps often recreate
+        // their AX elements per query, so CFEqual would report a phantom change every cycle —
+        // flickering the overlay and tripping the acceptance guardrail. For those apps the
+        // app-switch observer is the (robust) reset; we skip the per-field check.
+        let frontBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        if !AppInsertionPolicy.unreliableCaretBounds(forBundleID: frontBundleID),
+           accessibilityManager.focusedElementChanged() {
+            handleFocusChange()
+        }
+        // Stamp every suggestion shown this cycle (spell/emoji/ML) with the current epoch so it
+        // can't be accepted after a later focus change lands it in the wrong field.
+        suggestionEpoch = focusEpoch.epoch
 
         spellCorrectionLength = 0
         emojiReplacementLength = 0
