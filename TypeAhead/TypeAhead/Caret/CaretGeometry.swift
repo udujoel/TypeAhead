@@ -12,6 +12,15 @@ enum CaretGeometry {
         let box: CGRect
     }
 
+    /// Flips a frame from the Quartz/ScreenCaptureKit global space (TOP-left origin, Y down) to
+    /// Cocoa screen coordinates (BOTTOM-left origin, Y up). `menuBarHeight` is the primary screen's
+    /// Cocoa `frame.maxY` (its full height), the axis both spaces share. Used to convert an
+    /// `SCWindow.frame` into the same coordinate space the overlay positions in — so the Vision
+    /// mapping uses the region that was actually captured, not a separately-measured AX frame.
+    static func flipToCocoa(topLeftFrame f: CGRect, menuBarHeight: CGFloat) -> CGRect {
+        CGRect(x: f.minX, y: menuBarHeight - f.maxY, width: f.width, height: f.height)
+    }
+
     /// Maps a Vision normalized rect (bottom-left origin) to screen coordinates within
     /// `windowFrame` (Cocoa, bottom-left origin). The captured image fills the window frame.
     static func screenRect(fromNormalized norm: CGRect, in windowFrame: CGRect) -> CGRect {
@@ -31,6 +40,11 @@ enum CaretGeometry {
     /// - `matchScore`: needle suffix appears in haystack (classic case).
     /// - `leadingPrefixScore`: needle starts with haystack (OCR captured earlier partial text).
     /// Threshold is capped at 8 chars so a long needle doesn't demand an impossibly long match.
+    ///
+    /// Ties break toward the **bottom-most** observation: the text the user is actively typing
+    /// lives in the compose box, which sits at the bottom of virtually every chat app, so on an
+    /// equal score the lower box (smaller normalized minY, bottom-left origin) is the live caret
+    /// — not an identical phrase echoed in the scrollback above.
     static func bestMatch(trailingText: String, observations: [Observation], in windowFrame: CGRect) -> CGRect? {
         let needle = normalize(trailingText)
         guard needle.count >= 3 else { return nil }
@@ -42,7 +56,10 @@ enum CaretGeometry {
             let hay = normalize(obs.text)
             let score = max(matchScore(needle: needle, haystack: hay),
                             leadingPrefixScore(needle: needle, haystack: hay))
-            if score > bestScore {
+            guard score > 0 else { continue }
+            let beatsOnScore = score > bestScore
+            let tiesButLower = score == bestScore && (best.map { obs.box.minY < $0.box.minY } ?? false)
+            if beatsOnScore || tiesButLower {
                 bestScore = score
                 best = obs
             }

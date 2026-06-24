@@ -161,6 +161,10 @@ final class InferenceEngine {
                         raw += text
                         let ghost = InferenceEngine.ghostText(typed: prompt, raw: raw, isFillInMiddle: true, maxWords: maxWords)
                         if !ghost.isEmpty { lastGhost = ghost; onUpdate(ghost) }
+                        // Early stop: the overlay only shows the first line (≤ maxWords), so once
+                        // that's settled there's nothing more to display — stop generating to keep
+                        // suggestions snappy and save battery instead of letting the model ramble.
+                        if GhostText.shouldStopStreaming(raw: raw, maxWords: maxWords) { break }
                     }
                 }
 

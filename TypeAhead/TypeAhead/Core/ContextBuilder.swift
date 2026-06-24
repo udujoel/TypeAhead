@@ -20,13 +20,15 @@ enum ContextBuilder {
     /// Builds a compact prompt: the text immediately before the cursor, trimmed
     /// to the current sentence/line when that line is long enough to stand alone.
     ///
-    /// Three cases based on how much the user has typed into the current sentence:
+    /// Two cases based on how much the user has typed into the current sentence:
     /// • ≥ minTailChars chars: trim to the current sentence — it stands alone.
-    /// • 0 chars (cursor right at a sentence boundary): trim to the previous boundary
-    ///   to prevent cross-paragraph contamination (e.g. "support," surfacing after
-    ///   "How are you doing today?" because the 160-char window spans two topics).
-    /// • 1…minTailChars-1 chars: keep the full 160-char window so the model has
-    ///   enough context to continue a sentence that's just begun.
+    /// • < minTailChars chars (a sentence just begun, or the cursor sitting right at a
+    ///   boundary): keep at most ONE prior sentence as context — trim to the boundary
+    ///   before the most recent one. The immediate prior sentence is coherent signal for
+    ///   continuing the new thought; anything older is a different topic the model would
+    ///   echo (e.g. "support," surfacing after "How are you doing today?" because the
+    ///   160-char window spanned two paragraphs). Falls back to the full window only when
+    ///   there is no earlier boundary (a single sentence — all the context we have).
     ///
     /// `clipboard`/`history` are accepted for API compatibility but intentionally
     /// excluded — small models complete more accurately from a focused prompt.
@@ -49,22 +51,21 @@ enum ContextBuilder {
             if tailContent.count >= minTailChars {
                 // Current sentence is long enough to stand alone — trim here.
                 prefix = tail
-            } else if tailContent.isEmpty {
-                // Cursor is right at a sentence boundary (nothing typed yet in the new
-                // sentence). The full 160-char window likely spans a prior paragraph and
-                // the model will echo words from it. Trim back one more boundary so only
-                // the last complete sentence is used as context.
+            } else {
+                // Short or empty tail: the full 160-char window likely spans a prior paragraph
+                // and the model will echo words from it. Keep at most ONE prior sentence —
+                // trim to the boundary before the most recent one, so context is
+                // [immediate prior sentence][current partial], dropping older topics.
                 let beforeCurrentBoundary = String(prefix[..<boundary.lowerBound])
                 if let prevBoundary = lastRegexRange(in: beforeCurrentBoundary, pattern: boundaryPattern) {
-                    let lastSentencePlusTail = String(prefix[prevBoundary.upperBound...])
-                    if !lastSentencePlusTail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        prefix = lastSentencePlusTail
+                    let oneSentenceBack = String(prefix[prevBoundary.upperBound...])
+                    if !oneSentenceBack.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        prefix = oneSentenceBack
                     }
                 }
-                // else: single sentence in the window — full prefix is all the context available.
+                // else: no earlier boundary (single sentence) — the full prefix is all the
+                // context available, so keep it.
             }
-            // else: 1…minTailChars-1 chars typed — keep full prefix so the model has enough
-            // context to continue a sentence that's only just begun.
         }
 
         // Prepend a compact screen-context hint so the model understands the user's topic

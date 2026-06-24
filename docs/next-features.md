@@ -498,6 +498,17 @@ produce a visible-but-misplaced overlay. Builds on [#6], [#8], [#10].
 ---
 
 ## 12. Suggestion quality — cross-field context contamination + small-model output
+> **Context-hygiene fixes shipped** (branch `refine/suggestion-engine`, Phase 1). Root-cause
+> "off-topic" work: (1) **focus-change reset** — `AppDependencies` observes
+> `NSWorkspace.didActivateApplicationNotification` and (for reliable-AX apps)
+> `AccessibilityManager.focusedElementChanged()` (CFEqual) to clear the keystroke buffer, cancel
+> in-flight generation, and hide the ghost on app/field change, so a prior field's text can't leak
+> in. (2) **acceptance guardrail** via `FocusEpoch` — each suggestion is stamped with the focus
+> epoch and `onTabPressed` refuses to insert it once focus has drifted. (3) **tighter context
+> window** — `ContextBuilder` now keeps at most one prior sentence on a short/just-begun line
+> instead of the full 160-char window. (4) **early-stop streaming** — `GhostText.shouldStopStreaming`
+> halts MLX generation once the first line / `maxWords` is settled (snappier, less battery).
+> Deferred: semantic on-topic scoring of model output; larger-model default (stays opt-in).
 
 **Problem.** The suggestions are frequently nonsensical ("quite horrible at times"). Observed
 ghosts during normal note-taking include `'3pm sync is still on for the client review.'`,

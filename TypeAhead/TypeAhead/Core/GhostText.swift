@@ -114,6 +114,29 @@ enum GhostText {
         return continuation
     }
 
+    /// Whether streaming can stop early because more tokens can't change the displayed ghost.
+    ///
+    /// The overlay shows only the first line (up to the first newline) capped at `maxWords`, so
+    /// once the model has produced a complete first line — a newline following real content — or
+    /// more than `maxWords` words on that line, further generation is wasted. Stopping there keeps
+    /// suggestions snappy and saves battery. Sanitizing first means template scaffolding or a
+    /// blank line emitted *before* any real content doesn't stop us prematurely.
+    static func shouldStopStreaming(raw: String, maxWords: Int) -> Bool {
+        let cleaned = CompletionTextSanitizer.sanitize(raw)
+        guard !cleaned.isEmpty else { return false }
+        // First line complete: a newline survives sanitization only when it sits between real
+        // content (leading/trailing whitespace is trimmed), so its presence means the line ended.
+        if cleaned.contains("\n") { return true }
+        // Word cap exceeded: more than maxWords words means the first maxWords are complete and
+        // the remainder would be clamped away. Exactly maxWords doesn't stop — the last word may
+        // still be growing (e.g. "four" → "fourteen").
+        if maxWords > 0 {
+            let words = cleaned.split(separator: " ", omittingEmptySubsequences: true)
+            if words.count > maxWords { return true }
+        }
+        return false
+    }
+
     /// Keeps at most `maxWords` space-separated words.
     static func clampWords(_ text: String, _ maxWords: Int) -> String {
         let words = text.split(separator: " ", omittingEmptySubsequences: true)

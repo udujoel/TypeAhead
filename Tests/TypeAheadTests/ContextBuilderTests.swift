@@ -195,6 +195,23 @@ import Testing
         #expect(result.contains("How are you"))
     }
 
+    @Test func shortTailDropsOlderParagraphKeepsImmediatePriorSentence() {
+        // Two complete prior sentences, then a short new sentence ("How are you", 11 chars < 25).
+        // The OLD topic ("Apples are red") must be dropped — it's what makes the model go
+        // off-topic — while the IMMEDIATE prior sentence ("Bananas are yellow") is kept as
+        // coherent context for continuing the new one.
+        let ctx = TextContext(
+            textBeforeCursor: "Apples are red. Bananas are yellow. How are you",
+            textAfterCursor: "",
+            appName: "Notes",
+            windowTitle: ""
+        )
+        let result = ContextBuilder.buildPrompt(context: ctx, clipboard: nil, history: [], customInstructions: "")
+        #expect(!result.contains("Apples"), "the older paragraph must be dropped to avoid off-topic latching")
+        #expect(result.contains("Bananas are yellow"))
+        #expect(result.contains("How are you"))
+    }
+
     @Test func singleSentenceInWindowKeepsFullContext() {
         // No prior sentence boundary in the window — nothing to fall back to.
         // Full prefix is used regardless of tail length.

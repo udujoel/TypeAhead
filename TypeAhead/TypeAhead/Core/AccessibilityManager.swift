@@ -19,7 +19,7 @@ final class AccessibilityManager {
     /// Wires the focused-window capture used by Vision caret detection. Called once from the
     /// app side (`AppDependencies`) so the ScreenCaptureKit dependency stays out of the test
     /// target. Until called, unreliable-app placement uses the pinned bar only.
-    func enableVisionCapture(_ capture: @escaping () async -> NSImage?) {
+    func enableVisionCapture(_ capture: @escaping () async -> (image: NSImage, topLeftFrame: CGRect)?) {
         caretLocator.captureWindow = capture
     }
 
@@ -83,6 +83,25 @@ final class AccessibilityManager {
 
     private var didProbeAX = false
     private var lastFocusDiag = ""
+
+    /// The focused element seen on the previous `focusedElementChanged()` call — the baseline
+    /// for detecting a field switch within an app.
+    private var lastFocusedElement: AXUIElement?
+
+    /// True when the focused text element has changed since the last call (the user clicked or
+    /// tabbed into a *different* field). Callers drop stale context on a change so a prior field's
+    /// text can't leak into — or a prior field's suggestion be inserted into — the new one.
+    ///
+    /// Returns false when nothing is focused (a transient AX read failure or a non-text element)
+    /// so flaky reads don't spuriously trip a reset, and false on the very first observation
+    /// (it just establishes the baseline). `CFEqual` compares AX element identity (pid + element),
+    /// which is stable across separate reads of the same focused element.
+    func focusedElementChanged() -> Bool {
+        guard let current = focusedTextElement() else { return false }
+        defer { lastFocusedElement = current }
+        guard let last = lastFocusedElement else { return false }
+        return !CFEqual(current, last)
+    }
 
     func readTextContext() -> TextContext? {
         guard let element = focusedTextElement() else {
