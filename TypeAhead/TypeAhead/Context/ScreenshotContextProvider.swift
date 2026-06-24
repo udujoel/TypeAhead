@@ -46,21 +46,21 @@ enum ScreenshotContextProvider {
             let handler = VNImageRequestHandler(cgImage: cgImage)
             try? handler.perform([request])
 
-            // Filter out low-confidence observations and symbol-heavy lines (OCR artifacts
-            // from app UI controls, icons, or decorative glyphs that produce junk like "•••"
-            // or "Ll8?.G•..." — those garble LLM completions when injected as screen context).
+            // Filter out low-confidence observations and OCR garble (symbol soup AND
+            // letter-substitution junk like "SIiow4(s Liie aciive 1110(Ael") that would
+            // otherwise poison the completion prompt. See OCRTextQuality for the heuristics.
             let lines = (request.results ?? []).compactMap { obs -> String? in
                 guard let top = obs.topCandidates(1).first,
                       top.confidence >= 0.4 else { return nil }
                 let s = top.string
-                guard s.count >= 3 else { return nil }
-                let alphaCount = s.filter { $0.isLetter || $0.isNumber || $0 == " " }.count
-                guard Double(alphaCount) / Double(s.count) >= 0.6 else { return nil }
+                guard s.count >= 3, OCRTextQuality.isLikelyReadable(s) else { return nil }
                 return s
             }
             let joined = lines.joined(separator: " ")
             let trimmed = String(joined.prefix(maxChars))
-            return trimmed.isEmpty ? nil : trimmed
+            // Final guard on the assembled text: even if individual lines pass, the joined
+            // result must read as real text before we hand it to the model.
+            return OCRTextQuality.isLikelyReadable(trimmed) ? trimmed : nil
         }.value
     }
 }

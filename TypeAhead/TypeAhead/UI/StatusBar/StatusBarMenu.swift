@@ -34,7 +34,13 @@ final class StatusBarMenu: NSObject, NSMenuDelegate {
 
         let menu = NSMenu()
         menu.delegate = self          // contents rebuilt on each open — always fresh
+        rebuild(menu)                 // eager build: never show an empty menu if the delegate misfires
         statusItem.menu = menu
+
+        // Diagnostic so we can confirm from logs that THIS build's menu installed and is visible
+        // (vs. a stale build, or the icon being hidden behind the notch / a crowded menu bar).
+        let hasButton = statusItem.button != nil
+        print("📊 StatusBarMenu installed — button=\(hasButton) visible=\(statusItem.isVisible) items=\(menu.items.count) (rich menu v2)")
     }
 
     // MARK: - Status-item button (must never become invisible)
