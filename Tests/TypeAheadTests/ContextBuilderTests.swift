@@ -69,16 +69,75 @@ import Testing
         #expect(result.count <= 160)
     }
 
-    @Test func clipboardAndHistoryAreExcluded() {
+    @Test func historyIsExcluded() {
+        // `history` is accepted for API compatibility but intentionally unused — small
+        // models complete more accurately from a focused prompt.
         let ctx = TextContext(textBeforeCursor: "Some text", textAfterCursor: "", appName: "Slack", windowTitle: "")
         let result = ContextBuilder.buildPrompt(
             context: ctx,
-            clipboard: "SECRET-CLIPBOARD",
+            clipboard: nil,
             history: ["PAST-HISTORY"],
             customInstructions: ""
         )
-        #expect(!result.contains("SECRET-CLIPBOARD"))
         #expect(!result.contains("PAST-HISTORY"))
+    }
+
+    // MARK: - clipboard injection
+
+    @Test func clipboardPrependsHintWhenReadable() {
+        let ctx = TextContext(textBeforeCursor: "The revenue was", textAfterCursor: "", appName: "Numbers", windowTitle: "")
+        let result = ContextBuilder.buildPrompt(
+            context: ctx, clipboard: "Q3 revenue figures", history: [], customInstructions: ""
+        )
+        #expect(result.hasPrefix("[Clipboard: Q3 revenue figures]"))
+        #expect(result.contains("The revenue was"))
+    }
+
+    @Test func clipboardAbsentWhenNil() {
+        let ctx = TextContext(textBeforeCursor: "Hello world", textAfterCursor: "", appName: "Notes", windowTitle: "")
+        let result = ContextBuilder.buildPrompt(context: ctx, clipboard: nil, history: [], customInstructions: "")
+        #expect(!result.contains("[Clipboard:"))
+        #expect(result == "Hello world")
+    }
+
+    @Test func clipboardTruncatedAt120Chars() {
+        let longClipboard = String(repeating: "y", count: 200)
+        let ctx = TextContext(textBeforeCursor: "abc", textAfterCursor: "", appName: "Notes", windowTitle: "")
+        let result = ContextBuilder.buildPrompt(context: ctx, clipboard: longClipboard, history: [], customInstructions: "")
+        let hintEnd = result.firstIndex(of: "\n") ?? result.endIndex
+        let hint = String(result[..<hintEnd])
+        #expect(hint == "[Clipboard: \(String(repeating: "y", count: 120))]")
+    }
+
+    @Test func clipboardGarbledSymbolsAreFiltered() {
+        let ctx = TextContext(textBeforeCursor: "Hello world", textAfterCursor: "", appName: "Notes", windowTitle: "")
+        let garbled = "••• Ll8?.G•..."
+        let result = ContextBuilder.buildPrompt(context: ctx, clipboard: garbled, history: [], customInstructions: "")
+        #expect(!result.contains("[Clipboard:"), "garbled clipboard context must be suppressed")
+        #expect(result == "Hello world")
+    }
+
+    @Test func emptyClipboardBehavesLikeNil() {
+        let ctx = TextContext(textBeforeCursor: "Hello", textAfterCursor: "", appName: "Notes", windowTitle: "")
+        let result = ContextBuilder.buildPrompt(context: ctx, clipboard: "   ", history: [], customInstructions: "")
+        #expect(result == "Hello")
+        #expect(!result.contains("[Clipboard:"))
+    }
+
+    @Test func screenAndClipboardHintsBothPresentInOrder() {
+        let ctx = TextContext(textBeforeCursor: "Draft text", textAfterCursor: "", appName: "Mail", windowTitle: "")
+        let result = ContextBuilder.buildPrompt(
+            context: ctx, clipboard: "Copied paragraph", history: [], customInstructions: "",
+            screenContext: "On-screen document"
+        )
+        #expect(result.contains("[Screen: On-screen document]"))
+        #expect(result.contains("[Clipboard: Copied paragraph]"))
+        // Screen hint precedes clipboard hint, both precede the typed prefix.
+        let screenRange = result.range(of: "[Screen:")!
+        let clipboardRange = result.range(of: "[Clipboard:")!
+        let prefixRange = result.range(of: "Draft text")!
+        #expect(screenRange.lowerBound < clipboardRange.lowerBound)
+        #expect(clipboardRange.lowerBound < prefixRange.lowerBound)
     }
 
     // MARK: - screenContext injection

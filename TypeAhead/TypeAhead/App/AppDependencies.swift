@@ -199,6 +199,20 @@ final class AppDependencies {
             screenContextCache = nil
         }
 
+        // Clipboard context: honor the "Use Clipboard Context" toggle for real (it used to be
+        // wired to nothing — see CLAUDE.md history). Cap at 200 chars and run it through the
+        // same OCR-quality hygiene screen context uses, so a copied password/token/garbage
+        // blob doesn't get echoed into a suggestion. ContextBuilder re-checks readability on
+        // its own 120-char excerpt as defense-in-depth.
+        let clipboardContext: String?
+        if settings.useClipboardContext,
+           let clipboard = ClipboardContextProvider.current() {
+            let capped = String(clipboard.prefix(200))
+            clipboardContext = OCRTextQuality.isLikelyReadable(capped) ? capped : nil
+        } else {
+            clipboardContext = nil
+        }
+
         // Require a minimum typed prefix before firing. Check textBeforeCursor directly —
         // NOT the assembled prompt — so that screen context (which can be 120+ chars of OCR
         // text) doesn't inflate the count past the threshold when the user has only typed
@@ -211,7 +225,7 @@ final class AppDependencies {
 
         let prompt = ContextBuilder.buildPrompt(
             context: context,
-            clipboard: nil,
+            clipboard: clipboardContext,
             history: [],
             customInstructions: settings.customInstructions,
             screenContext: screenContext
