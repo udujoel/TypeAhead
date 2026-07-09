@@ -47,4 +47,15 @@ import Testing
         let o = AppOverride(completionsEnabled: nil, tabKeyDisabled: nil)
         #expect(AppPolicyResolver.resolve(globalCompletionsEnabled: true, excludedByList: false, override: o).tabKeyDisabled == false)
     }
+
+    @Test func styleInstructionDefaultsToNil() {
+        let p = AppPolicyResolver.resolve(globalCompletionsEnabled: true, excludedByList: false, override: nil)
+        #expect(p.styleInstruction == nil)
+    }
+
+    @Test func styleInstructionPassesThroughFromOverride() {
+        let o = AppOverride(completionsEnabled: nil, tabKeyDisabled: nil, styleInstruction: "Keep it terse and casual.")
+        let p = AppPolicyResolver.resolve(globalCompletionsEnabled: true, excludedByList: false, override: o)
+        #expect(p.styleInstruction == "Keep it terse and casual.")
+    }
 }
