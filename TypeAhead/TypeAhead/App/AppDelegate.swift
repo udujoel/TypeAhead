@@ -30,7 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // see the `@autoclosure` on `handleKeystroke`.
             let effect = deps.overlayController.handleKeystroke(
                 typedChar: event.characters,
-                cursorRect: deps.accessibilityManager.cursorScreenRect()
+                cursorRect: deps.accessibilityManager.inlineCursorRect()
             )
             switch effect {
             case .advanced:
@@ -195,7 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     deps.overlayController.continueShowingML(
                         ghost: remaining,
                         epoch: generationEpoch,
-                        cursorRect: deps.accessibilityManager.cursorScreenRect()
+                        cursorRect: deps.accessibilityManager.inlineCursorRect()
                     )
                 }
             }

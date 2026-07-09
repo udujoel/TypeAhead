@@ -16,7 +16,13 @@ final class AppDependencies {
     /// `spellCorrectionLength` / `emojiReplacementLength` / `suggestionEpoch` vars plus manual
     /// `keyMonitor.isOverlayVisible` bookkeeping at each call site. `AppDelegate` and
     /// `runCompletion` below go through this for every overlay show/update/hide.
-    lazy var overlayController = OverlayController(panel: completionOverlay, keyMonitor: keyMonitor)
+    lazy var overlayController = OverlayController(
+        panel: completionOverlay,
+        keyMonitor: keyMonitor,
+        onPlacementSuppressed: { [weak self] in
+            self?.recordSuggestionEvent(kind: .rejected, ghostText: "", metadata: "placementSuppressed")
+        }
+    )
     let eventStore = SuggestionEventStore()
     /// Last-50 full-detail ring buffer for the Diagnostics settings pane. In-memory only —
     /// never persisted (privacy: full prompt/ghost text must never touch disk). See
@@ -216,23 +222,26 @@ final class AppDependencies {
         switch CompletionCoordinator.selectFastPath(spellFix: spellFix, emojiShortcode: emojiShortcode, emojiMatch: emojiMatch) {
         case .spell(let fix):
             // Tab acceptance uses replaceCurrentWord to swap the misspelled word in-place.
-            if let cursorRect = accessibilityManager.cursorScreenRect() {
+            if let placement = accessibilityManager.cursorScreenRect() {
                 let fontSize = accessibilityManager.focusedFontSize()
                 inferenceEngine.cancelCurrent()
+                logger.info("placement tier=\(placement.tier.rawValue, privacy: .public) presentation=\(String(describing: placement.presentation), privacy: .public)")
                 logger.debug("spell correction: '\(fix.original, privacy: .private)' -> '\(fix.suggestion, privacy: .private)'")
                 overlayController.showSpell(
                     ghost: fix.suggestion,
                     replaceLen: fix.misspelledLength,
                     epoch: cycleEpoch,
-                    cursorRect: cursorRect,
-                    fontSize: fontSize
+                    cursorRect: placement.rect,
+                    fontSize: fontSize,
+                    presentation: placement.presentation
                 )
+                guard placement.presentation != .suppress else { return }
                 recordSuggestionEvent(
                     kind: .shown,
                     promptTail: String(context.textBeforeCursor.suffix(40)),
                     ghostText: fix.suggestion,
                     latencyMs: Date().timeIntervalSince(generationStart) * 1000,
-                    metadata: "spellCorrection"
+                    metadata: "spellCorrection,tier=\(placement.tier.rawValue)"
                 )
                 return
             }
@@ -241,23 +250,26 @@ final class AppDependencies {
 
         case .emoji(let shortcode, let emoji):
             // Tab acceptance uses replaceCurrentWord to swap the `:shortcode` for the emoji.
-            if let cursorRect = accessibilityManager.cursorScreenRect() {
+            if let placement = accessibilityManager.cursorScreenRect() {
                 let fontSize = accessibilityManager.focusedFontSize()
                 inferenceEngine.cancelCurrent()
-                logger.debug("emoji suggestion for shortcode '\(shortcode, privacy: .private)' at \(cursorRect.origin.debugDescription, privacy: .public)")
+                logger.info("placement tier=\(placement.tier.rawValue, privacy: .public) presentation=\(String(describing: placement.presentation), privacy: .public)")
+                logger.debug("emoji suggestion for shortcode '\(shortcode, privacy: .private)' at \(placement.rect.origin.debugDescription, privacy: .public)")
                 overlayController.showEmoji(
                     ghost: emoji,
                     replaceLen: 1 + shortcode.count,  // ":" + shortcode
                     epoch: cycleEpoch,
-                    cursorRect: cursorRect,
-                    fontSize: fontSize
+                    cursorRect: placement.rect,
+                    fontSize: fontSize,
+                    presentation: placement.presentation
                 )
+                guard placement.presentation != .suppress else { return }
                 recordSuggestionEvent(
                     kind: .shown,
                     promptTail: String(context.textBeforeCursor.suffix(40)),
                     ghostText: emoji,
                     latencyMs: Date().timeIntervalSince(generationStart) * 1000,
-                    metadata: "emoji"
+                    metadata: "emoji,tier=\(placement.tier.rawValue)"
                 )
                 return
             }
@@ -349,12 +361,14 @@ final class AppDependencies {
             appStyleInstruction: currentPolicy.styleInstruction
         )
 
-        guard let cursorRect = accessibilityManager.cursorScreenRect() else { return }
+        guard let placement = accessibilityManager.cursorScreenRect() else { return }
+        let cursorRect = placement.rect
         let fontSize = accessibilityManager.focusedFontSize()
         // Snapshot the epoch this generation belongs to (set at the top, before the awaits above).
         // The onUpdate hop below runs on a *later* main-actor turn, so a focus change can land in
         // between — guard the paint on the epoch so a stale ghost can't flash in the new field.
         let generationEpoch = cycleEpoch
+        logger.info("placement tier=\(placement.tier.rawValue, privacy: .public) presentation=\(String(describing: placement.presentation), privacy: .public)")
         logger.debug("completion request: source=\(source, privacy: .public) prompt='\(prompt.suffix(60), privacy: .private)' suffix='\(suffix.prefix(40), privacy: .private)' persona=\(personaNote != nil, privacy: .public) cursor=\(cursorRect.debugDescription, privacy: .public)")
         let promptTail = String(context.textBeforeCursor.suffix(40))
 
@@ -376,11 +390,15 @@ final class AppDependencies {
                     ghost: full,
                     epoch: generationEpoch,
                     cursorRect: cursorRect,
-                    fontSize: fontSize
+                    fontSize: fontSize,
+                    presentation: placement.presentation
                 )
                 // Only the FIRST paint of a generation cycle counts as "shown" — every subsequent
                 // streamed token update goes through the update-in-place branch inside
-                // `showOrUpdateML`, which intentionally does not re-record.
+                // `showOrUpdateML`, which intentionally does not re-record. When the placement is
+                // suppressed, `showOrUpdateML` always returns false (never paints), so this branch
+                // naturally never fires a `.shown` event for it — the suppression telemetry comes
+                // from `OverlayController.onPlacementSuppressed` instead.
                 if firstPaint {
                     logger.debug("overlay.show '\(full.prefix(40), privacy: .private)' at \(cursorRect.origin.debugDescription, privacy: .public)")
                     recordSuggestionEvent(
@@ -388,7 +406,7 @@ final class AppDependencies {
                         promptTail: promptTail,
                         ghostText: full,
                         latencyMs: Date().timeIntervalSince(generationStart) * 1000,
-                        metadata: "ml"
+                        metadata: "ml,tier=\(placement.tier.rawValue)"
                     )
                 }
             }

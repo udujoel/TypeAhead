@@ -235,7 +235,12 @@ final class AccessibilityManager {
         return cocoaRect
     }
 
-    func cursorScreenRect() -> NSRect? {
+    /// Runs the caret-location fallback ladder and tags the result with a `PlacementTier` so
+    /// callers can tell an exact caret from a mouse-position guess (WS5 — see
+    /// `Core/PlacementConfidence.swift`). Every `return` below is one rung of the ladder:
+    /// reliable-AX caret rect → fresh Vision OCR anchor → stale Vision anchor → AX rect anyway →
+    /// pinned bar → mouse position.
+    func cursorScreenRect() -> CaretPlacement? {
         let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
         let unreliable = AppInsertionPolicy.unreliableCaretBounds(forBundleID: bundleID)
         let axRect = onScreenAXCaretRect()
@@ -244,11 +249,11 @@ final class AccessibilityManager {
         if !unreliable {
             if let axRect {
                 logger.debug("caret reliable[\(bundleID, privacy: .public)] AX=\(self.rectStr(axRect), privacy: .public)")
-                return axRect
+                return CaretPlacement(rect: axRect, tier: .exactAX)
             }
             let mouse = NSEvent.mouseLocation
             logger.debug("caret reliable[\(bundleID, privacy: .public)] AX=nil -> mouse=(\(Int(mouse.x), privacy: .public),\(Int(mouse.y), privacy: .public))")
-            return NSRect(x: mouse.x, y: mouse.y - 24, width: 0, height: 20)
+            return CaretPlacement(rect: NSRect(x: mouse.x, y: mouse.y - 24, width: 0, height: 20), tier: .unknown)
         }
 
         // Unreliable apps (Electron/Chromium): vision → AX caret → pinned bar → mouse. AX stays
@@ -261,27 +266,39 @@ final class AccessibilityManager {
         if let windowFrame, let anchor = caretLocator.freshAnchor(forWindow: windowFrame),
            OverlayPositioner.isOnScreen(anchor, screenFrames: NSScreen.screens.map(\.frame)) {
             logger.debug("caret unreliable[\(bundleID, privacy: .public)] VISION=\(self.rectStr(anchor), privacy: .public)")
-            return anchor
+            return CaretPlacement(rect: anchor, tier: .visionFresh)
         }
         // Stale Vision anchor (TTL expired but same window): still pixel-accurate from a real
         // OCR scan — far better than the hardcoded window-corner PINNED bar.
         if let windowFrame, let anchor = caretLocator.staleAnchor(forWindow: windowFrame),
            OverlayPositioner.isOnScreen(anchor, screenFrames: NSScreen.screens.map(\.frame)) {
             logger.debug("caret unreliable[\(bundleID, privacy: .public)] VISION_STALE=\(self.rectStr(anchor), privacy: .public)")
-            return anchor
+            return CaretPlacement(rect: anchor, tier: .visionStale)
         }
         if let axRect {
             logger.debug("caret unreliable[\(bundleID, privacy: .public)] AX=\(self.rectStr(axRect), privacy: .public) (no vision; window=\(windowFrame.map(self.rectStr) ?? "nil", privacy: .public))")
-            return axRect
+            return CaretPlacement(rect: axRect, tier: .exactAX)
         }
         if let windowFrame {
             let pinned = OverlayPositioner.pinnedOrigin(windowFrame: windowFrame, panelSize: NSSize(width: 1, height: 20))
             logger.debug("caret unreliable[\(bundleID, privacy: .public)] PINNED=(\(Int(pinned.x), privacy: .public),\(Int(pinned.y), privacy: .public)) window=\(self.rectStr(windowFrame), privacy: .public) (no vision, no AX)")
-            return NSRect(origin: pinned, size: NSSize(width: 0, height: 20))
+            return CaretPlacement(rect: NSRect(origin: pinned, size: NSSize(width: 0, height: 20)), tier: .approximate)
         }
         let mouse = NSEvent.mouseLocation
         logger.debug("caret unreliable[\(bundleID, privacy: .public)] -> mouse=(\(Int(mouse.x), privacy: .public),\(Int(mouse.y), privacy: .public)) (no vision/AX/window)")
-        return NSRect(x: mouse.x, y: mouse.y - 24, width: 0, height: 20)
+        return CaretPlacement(rect: NSRect(x: mouse.x, y: mouse.y - 24, width: 0, height: 20), tier: .unknown)
+    }
+
+    /// `cursorScreenRect()` narrowed to the type-through reposition path (`AppDelegate`'s
+    /// `onKeystroke` handler and the post-Tab-accept `continueShowingML` call): those callers
+    /// only ever want a rect to reposition an ALREADY-showing inline ghost, never a pinned-bar or
+    /// suppressed placement — repositioning into either of those would silently teleport the
+    /// ghost away from the caret mid-type. Returns `nil` for `.pinnedBar`/`.suppress` tiers so the
+    /// caller takes its existing "cursor unavailable" branch (hide + `cursorUnavailable`
+    /// telemetry), exactly as it already does when the ladder returns nil outright.
+    func inlineCursorRect() -> NSRect? {
+        guard let placement = cursorScreenRect(), placement.presentation == .inline else { return nil }
+        return placement.rect
     }
 
     private func rectStr(_ r: NSRect) -> String {

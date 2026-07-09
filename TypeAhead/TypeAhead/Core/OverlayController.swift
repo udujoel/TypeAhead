@@ -36,26 +36,50 @@ enum OverlayKeystrokeEffect: Equatable {
 final class OverlayController {
     private let panel: CompletionOverlay
     private let keyMonitor: KeyEventMonitor
+    /// Fire-and-forget telemetry hook for a suppressed placement (WS5). Injected rather than
+    /// reaching for `AppDependencies.shared` directly: `AppDependencies.swift` requires Sparkle
+    /// and is excluded from the SPM test target, but this file (`OverlayController.swift`) is
+    /// NOT excluded — it needs to stay linkable/testable without that dependency. `AppDependencies`
+    /// wires this to its own `recordSuggestionEvent` when constructing `overlayController`.
+    private let onPlacementSuppressed: () -> Void
 
     private(set) var mode: OverlayMode = .hidden
 
-    init(panel: CompletionOverlay, keyMonitor: KeyEventMonitor) {
+    init(panel: CompletionOverlay, keyMonitor: KeyEventMonitor, onPlacementSuppressed: @escaping () -> Void = {}) {
         self.panel = panel
         self.keyMonitor = keyMonitor
+        self.onPlacementSuppressed = onPlacementSuppressed
     }
 
     // MARK: - Show (fast paths + ML)
 
     /// Spell-correction fast path. Always a fresh "shown" — the spell fast path re-detects from
     /// scratch every cycle, it never streams/updates in place.
-    func showSpell(ghost: String, replaceLen: Int, epoch: Int, cursorRect: NSRect, fontSize: CGFloat) {
+    ///
+    /// `presentation` (WS5 — `PlacementPolicy.presentation(for:)`) gates whether this actually
+    /// paints: `.suppress` means the placement guess (mouse position) is untrustworthy enough
+    /// that showing the ghost anywhere would read as "buggy app," so we no-op and record a
+    /// rejected/`placementSuppressed` event instead. `.inline` and `.pinnedBar` both paint at
+    /// `cursorRect` as before — for `.pinnedBar` that rect is already the pinned-bar origin
+    /// (`OverlayPositioner.pinnedOrigin`, computed upstream in `AccessibilityManager`), so no
+    /// separate rendering path is needed to "keep that look."
+    func showSpell(ghost: String, replaceLen: Int, epoch: Int, cursorRect: NSRect, fontSize: CGFloat, presentation: PlacementPresentation) {
+        guard presentation != .suppress else {
+            recordSuppressed()
+            return
+        }
         mode = OverlayStateMachine.showSpell(ghost: ghost, replaceLen: replaceLen, epoch: epoch)
         panel.show(text: ghost, near: cursorRect, fontSize: fontSize)
         keyMonitor.isOverlayVisible = true
     }
 
-    /// Emoji fast path. Same shape as `showSpell` — always a fresh "shown".
-    func showEmoji(ghost: String, replaceLen: Int, epoch: Int, cursorRect: NSRect, fontSize: CGFloat) {
+    /// Emoji fast path. Same shape as `showSpell` — always a fresh "shown". See `showSpell` for
+    /// the `presentation` gating.
+    func showEmoji(ghost: String, replaceLen: Int, epoch: Int, cursorRect: NSRect, fontSize: CGFloat, presentation: PlacementPresentation) {
+        guard presentation != .suppress else {
+            recordSuppressed()
+            return
+        }
         mode = OverlayStateMachine.showEmoji(ghost: ghost, replaceLen: replaceLen, epoch: epoch)
         panel.show(text: ghost, near: cursorRect, fontSize: fontSize)
         keyMonitor.isOverlayVisible = true
@@ -67,8 +91,15 @@ final class OverlayController {
     /// streamed token. Returns `true` only on the first paint of a cycle, so the caller knows
     /// whether to record a `.shown` event (mirrors the original
     /// `isOverlayVisible && !currentText.isEmpty` check in `AppDependencies.runCompletion`).
+    ///
+    /// See `showSpell` for the `presentation` gating (`.suppress` no-ops and records
+    /// `placementSuppressed` instead of painting).
     @discardableResult
-    func showOrUpdateML(ghost: String, epoch: Int, cursorRect: NSRect, fontSize: CGFloat) -> Bool {
+    func showOrUpdateML(ghost: String, epoch: Int, cursorRect: NSRect, fontSize: CGFloat, presentation: PlacementPresentation) -> Bool {
+        guard presentation != .suppress else {
+            recordSuppressed()
+            return false
+        }
         if mode.isVisible {
             mode = OverlayStateMachine.showML(ghost: ghost, epoch: epoch)
             panel.update(text: ghost, near: cursorRect)
@@ -79,6 +110,11 @@ final class OverlayController {
             keyMonitor.isOverlayVisible = true
             return true
         }
+    }
+
+    /// Fire-and-forget telemetry for a suppressed placement (WS5) — see `onPlacementSuppressed`.
+    private func recordSuppressed() {
+        onPlacementSuppressed()
     }
 
     /// After a word is accepted from an ML completion and the caller (glue code — the

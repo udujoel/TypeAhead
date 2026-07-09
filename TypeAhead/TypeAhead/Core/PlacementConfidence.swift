@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// How confident `AccessibilityManager.cursorScreenRect()` is in the rect it just returned.
 /// Every rung of the fallback ladder (reliable-AX caret → fresh Vision OCR anchor → stale Vision
@@ -34,7 +34,7 @@ enum PlacementPresentation: Equatable, Sendable {
     case suppress
 }
 
-/// Pure mapping from placement confidence to presentation policy. No AX/AppKit dependency so it's
+/// Pure mapping from placement confidence to presentation policy. Doesn't touch AX/Vision so it's
 /// trivially unit-testable.
 enum PlacementPolicy {
     static func presentation(for tier: PlacementTier) -> PlacementPresentation {
@@ -47,4 +47,14 @@ enum PlacementPolicy {
             return .suppress
         }
     }
+}
+
+/// A caret-location guess plus how confident `AccessibilityManager.cursorScreenRect()` is in it.
+/// `rect` is always in Cocoa screen coordinates, same as the pre-WS5 bare `NSRect` return.
+struct CaretPlacement: Equatable {
+    let rect: NSRect
+    let tier: PlacementTier
+
+    /// Where this placement should be presented, per `PlacementPolicy`.
+    var presentation: PlacementPresentation { PlacementPolicy.presentation(for: tier) }
 }
