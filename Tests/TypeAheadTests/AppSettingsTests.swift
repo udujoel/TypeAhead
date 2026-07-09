@@ -97,4 +97,48 @@ import Testing
         #expect(ids.contains("com.agilebits.onepassword7"))
         #expect(ids == ids.sorted())
     }
+
+    @Test func registerAppIfNeededAddsNewEntryWithNilOverride() {
+        let settings = AppSettings()
+        let bundleID = "com.test.registerAppIfNeededAddsNewEntryWithNilOverride"
+        settings.registerAppIfNeeded(bundleID: bundleID, displayName: "Test App")
+        let registered = settings.appRegistry[bundleID]
+        #expect(registered?.displayName == "Test App")
+        #expect(registered?.override.completionsEnabled == nil)
+        #expect(registered?.override.tabKeyDisabled == nil)
+    }
+
+    @Test func registerAppIfNeededDoesNotOverwriteExistingEntry() {
+        let settings = AppSettings()
+        let bundleID = "com.test.registerAppIfNeededDoesNotOverwriteExistingEntry"
+        settings.appRegistry[bundleID] = RegisteredApp(
+            bundleID: bundleID,
+            displayName: "Original",
+            override: AppOverride(completionsEnabled: false)
+        )
+        settings.registerAppIfNeeded(bundleID: bundleID, displayName: "Renamed")
+        #expect(settings.appRegistry[bundleID]?.displayName == "Original")
+        #expect(settings.appRegistry[bundleID]?.override.completionsEnabled == false)
+    }
+
+    @Test func registeredAppCodableRoundTrip() throws {
+        let app = RegisteredApp(
+            bundleID: "com.test.registeredAppCodableRoundTrip",
+            displayName: "Test",
+            override: AppOverride(completionsEnabled: true, tabKeyDisabled: true, styleInstruction: "Casual.")
+        )
+        let data = try JSONEncoder().encode(app)
+        let decoded = try JSONDecoder().decode(RegisteredApp.self, from: data)
+        #expect(decoded == app)
+    }
+
+    @Test func passwordManagersArePreSeededWithCompletionsDisabled() {
+        // The one-time seed migration runs against the real UserDefaults.standard the first
+        // time any AppSettings is constructed on this machine, so a freshly-constructed
+        // instance should already carry the seeded overrides.
+        let settings = AppSettings()
+        for bundleID in ["com.1password.1password", "com.bitwarden.desktop", "com.apple.keychainaccess", "com.apple.Passwords"] {
+            #expect(settings.appRegistry[bundleID]?.override.completionsEnabled == false, "expected \(bundleID) pre-seeded")
+        }
+    }
 }

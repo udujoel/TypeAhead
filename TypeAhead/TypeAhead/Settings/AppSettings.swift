@@ -68,6 +68,17 @@ final class AppSettings {
             }
         }
     }
+    /// Per-app registry (bundleID → registered app + override), backing the "Apps" settings
+    /// pane. Apps are auto-registered the first time completions run in them; entries here
+    /// with a non-nil override take precedence over the legacy `exceptionList` (see
+    /// `AppPolicyResolver`).
+    var appRegistry: [String: RegisteredApp] {
+        didSet {
+            if let data = try? JSONEncoder().encode(appRegistry) {
+                UserDefaults.standard.set(data, forKey: Keys.appRegistry)
+            }
+        }
+    }
 
     init() {
         let d = UserDefaults.standard
@@ -89,6 +100,12 @@ final class AppSettings {
         } else {
             exceptionList = .defaults
         }
+        if let data = d.data(forKey: Keys.appRegistry),
+           let decoded = try? JSONDecoder().decode([String: RegisteredApp].self, from: data) {
+            appRegistry = decoded
+        } else {
+            appRegistry = [:]
+        }
 
         // The old v2 migration bumped the delay to 0.35s to avoid firing on every
         // keystroke. The pipeline now has a max-wait throttle, so a short delay is fine
@@ -97,6 +114,35 @@ final class AppSettings {
             if completionDelay >= 0.25 { completionDelay = 0.18 }
             d.set(true, forKey: "didMigrateDelay_v3")
         }
+
+        // One-time pre-seed: disable completions by default in password managers/finance
+        // apps the exceptionList doesn't already cover as an explicit per-app override, so
+        // ghost text never appears over a password/secret field even if the user later
+        // edits or clears the legacy exception list.
+        if !d.bool(forKey: "didSeedAppRegistry_v1") {
+            let seeds: [(bundleID: String, displayName: String)] = [
+                ("com.1password.1password", "1Password"),
+                ("com.bitwarden.desktop", "Bitwarden"),
+                ("com.apple.keychainaccess", "Keychain Access"),
+                ("com.apple.Passwords", "Passwords"),
+            ]
+            for seed in seeds where appRegistry[seed.bundleID] == nil {
+                appRegistry[seed.bundleID] = RegisteredApp(
+                    bundleID: seed.bundleID,
+                    displayName: seed.displayName,
+                    override: AppOverride(completionsEnabled: false)
+                )
+            }
+            d.set(true, forKey: "didSeedAppRegistry_v1")
+        }
+    }
+
+    /// Auto-registers an app the first time completions run in it, so it shows up in the
+    /// "Apps" settings pane. No-op if already registered. New entries start with a
+    /// nil-fields override — pure inherited defaults — until the user sets one explicitly.
+    func registerAppIfNeeded(bundleID: String, displayName: String) {
+        guard appRegistry[bundleID] == nil else { return }
+        appRegistry[bundleID] = RegisteredApp(bundleID: bundleID, displayName: displayName)
     }
 
     private enum Keys {
@@ -113,5 +159,6 @@ final class AppSettings {
         static let launchAtLogin          = "launchAtLogin"
         static let emojiSuggestionsEnabled = "emojiSuggestionsEnabled"
         static let exceptionList            = "exceptionList"
+        static let appRegistry              = "appRegistry"
     }
 }
