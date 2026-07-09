@@ -1,0 +1,82 @@
+import Foundation
+
+/// Pure decision logic extracted from `AppDependencies.runCompletion` (WS3).
+///
+/// `runCompletion` is ~230 lines of AX reads, MLX inference calls, and ScreenCaptureKit OCR
+/// interleaved with the decisions that actually determine correctness — which fast path wins,
+/// whether the cycle should run at all, whether a cached screen-context OCR result is still
+/// good. None of that imperative I/O can move into an SPM target (it needs AppKit's AX APIs,
+/// MLXLLM, and ScreenCaptureKit — see `Package.swift`'s exclude list), so a full
+/// `CompletionCoordinator` that "runs" the cycle isn't SPM-testable without a large protocol
+/// surface duplicating those frameworks.
+///
+/// Per WS3's fallback guidance, this extracts the DECISION pieces only — the parts a bug most
+/// often actually lives in — as pure functions `AppDependencies.runCompletion` now calls instead
+/// of inlining the equivalent logic. What stays behind, and why:
+/// - AX context reads (`accessibilityManager.readTextContext`), cursor rect, font size: need
+///   live AX, not fakeable as pure data without a protocol that's most of `AccessibilityManager`.
+/// - `InferenceEngine.complete(...)`: needs MLXLMCommon; SPM excludes `InferenceEngine.swift`.
+/// - `ScreenshotContextProvider.captureAndExtractText()`: needs ScreenCaptureKit.
+/// - The overlay show/update/hide calls themselves: that's `OverlayController`'s job (see
+///   `OverlayController.swift`), already extracted and tested via `OverlayStateMachine`.
+enum CompletionCoordinator {
+
+    // MARK: - Policy-disabled early exit
+
+    /// Whether a completion cycle should proceed past policy resolution. Mirrors
+    /// `runCompletion`'s `guard currentPolicy.completionsEnabled else { return }` — kept as a
+    /// named function (rather than inlining `policy.completionsEnabled`) so the "early exit on
+    /// disabled policy" rule has one obvious place to test and read, independent of how
+    /// `ResolvedPolicy` gets computed.
+    static func shouldRunCycle(policy: ResolvedPolicy) -> Bool {
+        policy.completionsEnabled
+    }
+
+    // MARK: - Fast-path selection order
+
+    /// Which fast path (if any) a completion cycle should take, given what the spell-checker and
+    /// emoji matcher found this cycle. Mirrors `runCompletion`'s two sequential `if let` blocks
+    /// exactly: spell-correction is checked (and wins) first; emoji is only considered when no
+    /// spell fix was found. Neither fast path needs the ML model loaded — that guard sits after
+    /// both of these in `runCompletion` and is untouched by this function.
+    enum FastPath: Equatable {
+        case spell(TypoFix)
+        case emoji(shortcode: String, emoji: String)
+        case none
+    }
+
+    static func selectFastPath(spellFix: TypoFix?, emojiShortcode: String?, emojiMatch: String?) -> FastPath {
+        if let spellFix {
+            return .spell(spellFix)
+        }
+        if let emojiShortcode, let emojiMatch {
+            return .emoji(shortcode: emojiShortcode, emoji: emojiMatch)
+        }
+        return .none
+    }
+
+    // MARK: - Screen-context cache TTL
+
+    /// One cached OCR screen-context read: the extracted text, when it was captured, and which
+    /// app's window it came from.
+    struct ScreenContextCache: Equatable {
+        var text: String
+        var at: Date
+        var bundleID: String
+    }
+
+    /// Whether a cached screen-context OCR result is still usable, or a fresh capture is needed.
+    /// Mirrors `runCompletion`'s cache check exactly: usable only within `ttl` of capture AND for
+    /// the same frontmost app (switching apps invalidates the cache even if it hasn't expired —
+    /// otherwise a stale OCR from the previous app could leak into a new app's prompt).
+    static func shouldUseCachedScreenContext(
+        cache: ScreenContextCache?,
+        now: Date,
+        ttl: TimeInterval,
+        currentBundleID: String
+    ) -> Bool {
+        guard let cache else { return false }
+        guard now.timeIntervalSince(cache.at) < ttl else { return false }
+        return cache.bundleID == currentBundleID
+    }
+}

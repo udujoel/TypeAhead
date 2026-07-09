@@ -1,6 +1,6 @@
 import AppKit
 
-struct TypoFix: Sendable {
+struct TypoFix: Sendable, Equatable {
     let original: String
     let suggestion: String
     /// Character count of the misspelled word to delete backward from the cursor.

@@ -117,7 +117,7 @@ final class AppDependencies {
         Task { @MainActor in try? store.record(event) }
     }
 
-    private var screenContextCache: (text: String, at: Date, bundleID: String)?
+    private var screenContextCache: CompletionCoordinator.ScreenContextCache?
     private let screenContextCacheTTL: TimeInterval = 2.0
 
     private func runCompletion() async {
@@ -143,7 +143,7 @@ final class AppDependencies {
                 excludedByList: excluded,
                 override: override
             )
-            guard currentPolicy.completionsEnabled else { return }
+            guard CompletionCoordinator.shouldRunCycle(policy: currentPolicy) else { return }
         } else {
             currentPolicy = AppPolicyResolver.resolve(
                 globalCompletionsEnabled: settings.completionsEnabled,
@@ -197,59 +197,74 @@ final class AppDependencies {
             source = "buffer"
         }
 
-        // Spell-correction fast-path: when the last word before the cursor is misspelled,
-        // bypass ML inference and surface the NSSpellChecker suggestion as ghost text.
-        // Tab acceptance uses replaceCurrentWord to swap the misspelled word in-place.
-        // Runs even when no ML model is loaded.
-        if let fix = TypoDetector.correction(in: context.textBeforeCursor),
-           let cursorRect = accessibilityManager.cursorScreenRect() {
-            let fontSize = accessibilityManager.focusedFontSize()
-            inferenceEngine.cancelCurrent()
-            logger.debug("spell correction: '\(fix.original, privacy: .private)' -> '\(fix.suggestion, privacy: .private)'")
-            overlayController.showSpell(
-                ghost: fix.suggestion,
-                replaceLen: fix.misspelledLength,
-                epoch: cycleEpoch,
-                cursorRect: cursorRect,
-                fontSize: fontSize
-            )
-            recordSuggestionEvent(
-                kind: .shown,
-                promptTail: String(context.textBeforeCursor.suffix(40)),
-                ghostText: fix.suggestion,
-                latencyMs: Date().timeIntervalSince(generationStart) * 1000,
-                metadata: "spellCorrection"
-            )
-            return
-        }
+        // Fast-path selection (WS3, CompletionCoordinator.selectFastPath): spell-correction and
+        // emoji-shortcode detection are mutually exclusive by construction — TypoDetector only
+        // matches a trailing all-letters word with no ':' prefix, EmojiSuggester only matches
+        // text ending in ":shortcode" with no space after the colon — so at most one of
+        // `spellFix` / `emojiShortcode`+`emojiMatch` is ever non-nil for the same cursor
+        // position. `selectFastPath` picks spell first when both were somehow present, matching
+        // the original code's spell-checked-before-emoji ordering.
+        //
+        // Both detectors run even when no ML model is loaded (checked further below); neither
+        // needs the inference engine.
+        let spellFix = TypoDetector.correction(in: context.textBeforeCursor)
+        let emojiShortcode: String? = EmojiSuggester.isEmojiMode(textBeforeCursor: context.textBeforeCursor)
+            ? EmojiSuggester.shortcode(from: context.textBeforeCursor)
+            : nil
+        let emojiMatch = emojiShortcode.flatMap { EmojiSuggester.suggest(shortcode: $0).first }
 
-        // Emoji fast path: when the user types `:shortcode`, bypass ML inference entirely
-        // and surface the matching emoji as ghost text.  Tab acceptance uses replaceCurrentWord
-        // to swap the `:shortcode` for the emoji.  replaceLen encodes how many characters to
-        // delete (1 colon + shortcode length).
-        // Runs even when no model is loaded — emoji lookup needs no inference engine.
-        if EmojiSuggester.isEmojiMode(textBeforeCursor: context.textBeforeCursor),
-           let shortcode = EmojiSuggester.shortcode(from: context.textBeforeCursor),
-           let emoji = EmojiSuggester.suggest(shortcode: shortcode).first,
-           let cursorRect = accessibilityManager.cursorScreenRect() {
-            let fontSize = accessibilityManager.focusedFontSize()
-            inferenceEngine.cancelCurrent()
-            logger.debug("emoji suggestion for shortcode '\(shortcode, privacy: .private)' at \(cursorRect.origin.debugDescription, privacy: .public)")
-            overlayController.showEmoji(
-                ghost: emoji,
-                replaceLen: 1 + shortcode.count,  // ":" + shortcode
-                epoch: cycleEpoch,
-                cursorRect: cursorRect,
-                fontSize: fontSize
-            )
-            recordSuggestionEvent(
-                kind: .shown,
-                promptTail: String(context.textBeforeCursor.suffix(40)),
-                ghostText: emoji,
-                latencyMs: Date().timeIntervalSince(generationStart) * 1000,
-                metadata: "emoji"
-            )
-            return
+        switch CompletionCoordinator.selectFastPath(spellFix: spellFix, emojiShortcode: emojiShortcode, emojiMatch: emojiMatch) {
+        case .spell(let fix):
+            // Tab acceptance uses replaceCurrentWord to swap the misspelled word in-place.
+            if let cursorRect = accessibilityManager.cursorScreenRect() {
+                let fontSize = accessibilityManager.focusedFontSize()
+                inferenceEngine.cancelCurrent()
+                logger.debug("spell correction: '\(fix.original, privacy: .private)' -> '\(fix.suggestion, privacy: .private)'")
+                overlayController.showSpell(
+                    ghost: fix.suggestion,
+                    replaceLen: fix.misspelledLength,
+                    epoch: cycleEpoch,
+                    cursorRect: cursorRect,
+                    fontSize: fontSize
+                )
+                recordSuggestionEvent(
+                    kind: .shown,
+                    promptTail: String(context.textBeforeCursor.suffix(40)),
+                    ghostText: fix.suggestion,
+                    latencyMs: Date().timeIntervalSince(generationStart) * 1000,
+                    metadata: "spellCorrection"
+                )
+                return
+            }
+            // Cursor rect unavailable — matches the original: no early return here, falls
+            // through toward the ML path below rather than aborting the cycle.
+
+        case .emoji(let shortcode, let emoji):
+            // Tab acceptance uses replaceCurrentWord to swap the `:shortcode` for the emoji.
+            if let cursorRect = accessibilityManager.cursorScreenRect() {
+                let fontSize = accessibilityManager.focusedFontSize()
+                inferenceEngine.cancelCurrent()
+                logger.debug("emoji suggestion for shortcode '\(shortcode, privacy: .private)' at \(cursorRect.origin.debugDescription, privacy: .public)")
+                overlayController.showEmoji(
+                    ghost: emoji,
+                    replaceLen: 1 + shortcode.count,  // ":" + shortcode
+                    epoch: cycleEpoch,
+                    cursorRect: cursorRect,
+                    fontSize: fontSize
+                )
+                recordSuggestionEvent(
+                    kind: .shown,
+                    promptTail: String(context.textBeforeCursor.suffix(40)),
+                    ghostText: emoji,
+                    latencyMs: Date().timeIntervalSince(generationStart) * 1000,
+                    metadata: "emoji"
+                )
+                return
+            }
+            // Cursor rect unavailable — falls through, same as the spell case above.
+
+        case .none:
+            break
         }
 
         // ML inference requires the model to be loaded.
@@ -260,14 +275,19 @@ final class AppDependencies {
         let screenContext: String?
         if settings.useScreenshotContext {
             let currentBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-            if let cache = screenContextCache,
-               Date().timeIntervalSince(cache.at) < screenContextCacheTTL,
-               cache.bundleID == currentBundleID {
+            if CompletionCoordinator.shouldUseCachedScreenContext(
+                cache: screenContextCache,
+                now: Date(),
+                ttl: screenContextCacheTTL,
+                currentBundleID: currentBundleID
+            ), let cache = screenContextCache {
                 screenContext = cache.text
             } else {
                 let extracted = await ScreenshotContextProvider.captureAndExtractText()
                 screenContext = extracted
-                screenContextCache = extracted.map { (text: $0, at: Date(), bundleID: currentBundleID) }
+                screenContextCache = extracted.map {
+                    CompletionCoordinator.ScreenContextCache(text: $0, at: Date(), bundleID: currentBundleID)
+                }
             }
         } else {
             screenContext = nil
