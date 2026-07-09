@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import os
 
 // MARK: - CGEvent injection marker
 // Used to tag keyboard events we inject so our own CGEventTap ignores them.
@@ -9,6 +10,7 @@ extension AccessibilityManager {
 
 @MainActor
 final class AccessibilityManager {
+    private let logger = Logger(subsystem: "app.typeahead", category: "AccessibilityManager")
 
     /// Apps we've already asked to enable their accessibility tree (Chromium/Electron).
     private var coaxedPIDs = Set<pid_t>()
@@ -55,7 +57,7 @@ final class AccessibilityManager {
     private func probeAXOnce(_ message: String) {
         guard !didProbeAX else { return }
         didProbeAX = true
-        print("🔍 AX probe: \(message)")
+        logger.info("AX probe: \(message, privacy: .public)")
     }
 
     // MARK: - Pure Logic (testable without AX permission)
@@ -139,12 +141,12 @@ final class AccessibilityManager {
         let lengthBefore = element.stringValue?.count
         let result = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString)
         if result != .success {
-            print("⚠️ AX insertCompletion failed (\(result.rawValue)) — falling back to CGEvent injection")
+            logger.error("AX insertCompletion failed (\(result.rawValue, privacy: .public)) — falling back to CGEvent injection")
             injectText(text)
             return
         }
         if Self.isSilentNoOp(selectionLength: selectionLength, lengthBefore: lengthBefore, lengthAfter: element.stringValue?.count) {
-            print("⚠️ AX insertCompletion reported success but field unchanged — CGEvent fallback")
+            logger.error("AX insertCompletion reported success but field unchanged — CGEvent fallback")
             injectText(text)
         }
     }
@@ -241,11 +243,11 @@ final class AccessibilityManager {
         // Reliable apps: trust the AX caret directly (native AppKit/UIKit is accurate + fast).
         if !unreliable {
             if let axRect {
-                print("🎯 caret reliable[\(bundleID)] AX=\(rectStr(axRect))")
+                logger.debug("caret reliable[\(bundleID, privacy: .public)] AX=\(self.rectStr(axRect), privacy: .public)")
                 return axRect
             }
             let mouse = NSEvent.mouseLocation
-            print("🎯 caret reliable[\(bundleID)] AX=nil → mouse=(\(Int(mouse.x)),\(Int(mouse.y)))")
+            logger.debug("caret reliable[\(bundleID, privacy: .public)] AX=nil -> mouse=(\(Int(mouse.x), privacy: .public),\(Int(mouse.y), privacy: .public))")
             return NSRect(x: mouse.x, y: mouse.y - 24, width: 0, height: 20)
         }
 
@@ -258,27 +260,27 @@ final class AccessibilityManager {
         }
         if let windowFrame, let anchor = caretLocator.freshAnchor(forWindow: windowFrame),
            OverlayPositioner.isOnScreen(anchor, screenFrames: NSScreen.screens.map(\.frame)) {
-            print("🎯 caret unreliable[\(bundleID)] VISION=\(rectStr(anchor))")
+            logger.debug("caret unreliable[\(bundleID, privacy: .public)] VISION=\(self.rectStr(anchor), privacy: .public)")
             return anchor
         }
         // Stale Vision anchor (TTL expired but same window): still pixel-accurate from a real
         // OCR scan — far better than the hardcoded window-corner PINNED bar.
         if let windowFrame, let anchor = caretLocator.staleAnchor(forWindow: windowFrame),
            OverlayPositioner.isOnScreen(anchor, screenFrames: NSScreen.screens.map(\.frame)) {
-            print("🎯 caret unreliable[\(bundleID)] VISION_STALE=\(rectStr(anchor))")
+            logger.debug("caret unreliable[\(bundleID, privacy: .public)] VISION_STALE=\(self.rectStr(anchor), privacy: .public)")
             return anchor
         }
         if let axRect {
-            print("🎯 caret unreliable[\(bundleID)] AX=\(rectStr(axRect)) (no vision; window=\(windowFrame.map(rectStr) ?? "nil"))")
+            logger.debug("caret unreliable[\(bundleID, privacy: .public)] AX=\(self.rectStr(axRect), privacy: .public) (no vision; window=\(windowFrame.map(self.rectStr) ?? "nil", privacy: .public))")
             return axRect
         }
         if let windowFrame {
             let pinned = OverlayPositioner.pinnedOrigin(windowFrame: windowFrame, panelSize: NSSize(width: 1, height: 20))
-            print("🎯 caret unreliable[\(bundleID)] PINNED=(\(Int(pinned.x)),\(Int(pinned.y))) window=\(rectStr(windowFrame)) (no vision, no AX)")
+            logger.debug("caret unreliable[\(bundleID, privacy: .public)] PINNED=(\(Int(pinned.x), privacy: .public),\(Int(pinned.y), privacy: .public)) window=\(self.rectStr(windowFrame), privacy: .public) (no vision, no AX)")
             return NSRect(origin: pinned, size: NSSize(width: 0, height: 20))
         }
         let mouse = NSEvent.mouseLocation
-        print("🎯 caret unreliable[\(bundleID)] → mouse=(\(Int(mouse.x)),\(Int(mouse.y))) (no vision/AX/window)")
+        logger.debug("caret unreliable[\(bundleID, privacy: .public)] -> mouse=(\(Int(mouse.x), privacy: .public),\(Int(mouse.y), privacy: .public)) (no vision/AX/window)")
         return NSRect(x: mouse.x, y: mouse.y - 24, width: 0, height: 20)
     }
 

@@ -1,4 +1,5 @@
 import AppKit
+import os
 
 /// The menu-bar status item — TypeAhead's primary control surface for an accessory (no-Dock) app.
 ///
@@ -8,6 +9,7 @@ import AppKit
 /// it renders as an invisible, un-clickable region and looks like the app "disappeared").
 @MainActor
 final class StatusBarMenu: NSObject, NSMenuDelegate {
+    private let logger = Logger(subsystem: "app.typeahead", category: "StatusBarMenu")
     private let statusItem: NSStatusItem
     private let settings: AppSettings
     private let pipeline: CompletionPipeline
@@ -40,7 +42,7 @@ final class StatusBarMenu: NSObject, NSMenuDelegate {
         // Diagnostic so we can confirm from logs that THIS build's menu installed and is visible
         // (vs. a stale build, or the icon being hidden behind the notch / a crowded menu bar).
         let hasButton = statusItem.button != nil
-        print("📊 StatusBarMenu installed — button=\(hasButton) visible=\(statusItem.isVisible) items=\(menu.items.count) (rich menu v3 + ⌃⌥⌘T)")
+        logger.info("StatusBarMenu installed — button=\(hasButton, privacy: .public) visible=\(self.statusItem.isVisible, privacy: .public) items=\(menu.items.count, privacy: .public) (rich menu v3 + ^~T)")
 
         // After layout settles, report whether macOS actually placed the icon in a menu-bar
         // window. windowAttached=false with visible=true is the signature of notch/overflow
@@ -49,7 +51,7 @@ final class StatusBarMenu: NSObject, NSMenuDelegate {
             try? await Task.sleep(for: .seconds(1))
             let attached = self.statusItem.button?.window != nil
             let w = Int(self.statusItem.button?.frame.width ?? 0)
-            print("📊 StatusBarMenu post-launch — windowAttached=\(attached) buttonWidth=\(w) (if false: icon hidden by overflow — use ⌃⌥⌘T)")
+            self.logger.info("StatusBarMenu post-launch — windowAttached=\(attached, privacy: .public) buttonWidth=\(w, privacy: .public) (if false: icon hidden by overflow — use ^~T)")
         }
     }
 

@@ -1,5 +1,6 @@
 import AppKit
 import Carbon
+import os
 @preconcurrency import CoreGraphics
 
 // MARK: - Keystroke Buffer
@@ -63,6 +64,7 @@ final class KeystrokeBuffer {
 
 @MainActor
 final class KeyEventMonitor {
+    private let logger = Logger(subsystem: "app.typeahead", category: "KeyEventMonitor")
 
     // MARK: Public state
 
@@ -146,7 +148,7 @@ final class KeyEventMonitor {
         )
 
         guard let tap else {
-            print("⚠️ CGEventTap creation failed (Accessibility not trusted?) — using NSEvent fallback (Tab cannot be swallowed)")
+            logger.error("CGEventTap creation failed (Accessibility not trusted?) — using NSEvent fallback (Tab cannot be swallowed)")
             startFallbackMonitor()
             return
         }
@@ -156,7 +158,7 @@ final class KeyEventMonitor {
         CGEvent.tapEnable(tap: tap, enable: true)
         eventTap = tap
         runLoopSource = src
-        print("✅ CGEventTap started — Tab will be intercepted when overlay is visible")
+        logger.info("CGEventTap started — Tab will be intercepted when overlay is visible")
     }
 
     /// Fallback when CGEventTap can't be created (permission not yet granted).
@@ -182,7 +184,7 @@ final class KeyEventMonitor {
         // starts changing focus again.
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap = eventTap { CGEvent.tapEnable(tap: tap, enable: true) }
-            print("⚠️ event tap disabled (\(type.rawValue)) — re-enabled")
+            logger.error("event tap disabled (\(type.rawValue, privacy: .public)) — re-enabled")
             return nil
         }
 

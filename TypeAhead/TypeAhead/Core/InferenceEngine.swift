@@ -32,6 +32,7 @@ private func withLoadTimeout<T: Sendable>(
 
 @MainActor
 final class InferenceEngine {
+    private let logger = Logger(subsystem: "app.typeahead", category: "InferenceEngine")
 
     private(set) var isLoaded = false
     private var container: ModelContainer?
@@ -55,7 +56,7 @@ final class InferenceEngine {
         let cached = ModelManager.isModelCached(repoId: config.huggingFaceRepo)
         let start = Date()
         lastLoggedLoadPct = -1
-        print("⏳ loadModel: \(config.id) [\(config.huggingFaceRepo)] cached=\(cached) — starting")
+        logger.info("loadModel: \(config.id, privacy: .public) [\(config.huggingFaceRepo, privacy: .public)] cached=\(cached, privacy: .public) — starting")
 
         do {
             // Load into a LOCAL first; swap it in only after success. A slow or hung
@@ -76,9 +77,9 @@ final class InferenceEngine {
             container = loaded
             loadedModelID = config.id
             isLoaded = true
-            print("✅ loadModel: \(config.id) ready in \(Int(-start.timeIntervalSinceNow))s")
+            logger.info("loadModel: \(config.id, privacy: .public) ready in \(Int(-start.timeIntervalSinceNow), privacy: .public)s")
         } catch {
-            print("❌ loadModel: \(config.id) failed after \(Int(-start.timeIntervalSinceNow))s: \(error)")
+            logger.error("loadModel: \(config.id, privacy: .public) failed after \(Int(-start.timeIntervalSinceNow), privacy: .public)s: \(error.localizedDescription, privacy: .public)")
             throw InferenceError.loadFailed(error.localizedDescription)
         }
     }
@@ -89,7 +90,7 @@ final class InferenceEngine {
         let pct = Int(fraction * 100)
         if pct >= lastLoggedLoadPct + 10 || pct >= 100 {
             lastLoggedLoadPct = pct
-            print("📥 loadModel progress: \(pct)%")
+            logger.info("loadModel progress: \(pct, privacy: .public)%")
         }
     }
 
@@ -168,9 +169,9 @@ final class InferenceEngine {
                     }
                 }
 
-                print("🧠 raw='\(raw.prefix(120))' → ghost='\(lastGhost.prefix(80))'")
+                logger.debug("generation result: raw='\(raw.prefix(120), privacy: .private)' -> ghost='\(lastGhost.prefix(80), privacy: .private)'")
             } catch {
-                print("⚠️ InferenceEngine: generation error: \(error)")
+                logger.error("generation error: \(error.localizedDescription, privacy: .public)")
             }
 
             if !Task.isCancelled { onComplete() }

@@ -1,5 +1,6 @@
 import AppKit
 import Vision
+import os
 
 /// Locates the on-screen caret in apps whose AX caret rect is untrustworthy, by capturing the
 /// focused window and finding the user's trailing typed text via on-device Vision OCR. Pure
@@ -7,6 +8,7 @@ import Vision
 /// never blocking the keystroke path.
 @MainActor
 final class CaretLocator {
+    private let logger = Logger(subsystem: "app.typeahead", category: "CaretLocator")
 
     /// Captures the focused-window image plus the window's frame (Quartz/SCKit global, TOP-left
     /// origin). Injected (not a direct `ScreenshotContextProvider` call) so this type depends only
@@ -67,7 +69,7 @@ final class CaretLocator {
                   let cg = captured.image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
                 self.cachedAnchor = nil
                 self.cachedWindow = nil
-                print("👁️ vision: capture FAILED (Screen Recording permission off?) — pinned/AX fallback")
+                logger.info("vision capture FAILED (Screen Recording permission off?) — pinned/AX fallback")
                 return
             }
             // Map OCR boxes against the region that was ACTUALLY captured, not the AX window
@@ -76,7 +78,7 @@ final class CaretLocator {
             let menuBarHeight = NSScreen.screens.first?.frame.maxY ?? NSScreen.main?.frame.maxY ?? 0
             let captureFrame = CaretGeometry.flipToCocoa(topLeftFrame: captured.topLeftFrame, menuBarHeight: menuBarHeight)
             if abs(captureFrame.minX - windowFrame.minX) > 2 || abs(captureFrame.minY - windowFrame.minY) > 2 {
-                print("👁️ vision: capture frame \(rectStr(captureFrame)) ≠ AX frame \(rectStr(windowFrame)) — using capture frame")
+                logger.debug("vision capture frame \(self.rectStr(captureFrame), privacy: .public) != AX frame \(self.rectStr(windowFrame), privacy: .public) — using capture frame")
             }
             // OCR off the main thread; synchronous pattern (read request.results directly — no
             // continuation that could dangle if `perform` throws). Mirrors ScreenshotContextProvider.
@@ -92,7 +94,7 @@ final class CaretLocator {
             // better than snapping to the pinned bar. It expires naturally via lastComputed+TTL.
             let anchorDesc = anchor.map { "(\(Int($0.origin.x)),\(Int($0.origin.y)))" }
                 ?? (cachedAnchor != nil ? "NO MATCH (kept prev \(Int(cachedAnchor!.origin.x)),\(Int(cachedAnchor!.origin.y)))" : "NO MATCH")
-            print("👁️ vision: \(observations.count) text lines, trailing='\(trailing.suffix(16))' → anchor=\(anchorDesc)")
+            logger.debug("vision: \(observations.count, privacy: .public) text lines, trailing='\(trailing.suffix(16), privacy: .private)' -> anchor=\(anchorDesc, privacy: .public)")
         }
     }
 
