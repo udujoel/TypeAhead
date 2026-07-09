@@ -173,6 +173,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 } else {
                     deps.accessibilityManager.injectText(injection)
                 }
+                // WS6: the field's text just changed under the cached KV prompt (the accepted
+                // word is now part of the typed text, not the model's continuation) — the next
+                // debounce fire must reprocess the prompt from scratch.
+                deps.inferenceEngine.invalidateCache()
 
                 let accepted = firstWord
                 deps.keyMonitor.keystrokeBuffer.appendAccepted(accepted + " ")

@@ -76,6 +76,7 @@ final class AppDependencies {
     func handleFocusChange() {
         keyMonitor.keystrokeBuffer.clear()
         inferenceEngine.cancelCurrent()
+        inferenceEngine.invalidateCache()
         if overlayController.mode.isVisible {
             overlayController.hide(animated: false)
         }

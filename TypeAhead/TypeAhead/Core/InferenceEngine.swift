@@ -1,5 +1,6 @@
 import Foundation
 import os
+import MLX
 import MLXLLM
 import MLXLMCommon
 
@@ -30,15 +31,53 @@ private func withLoadTimeout<T: Sendable>(
     }
 }
 
+/// Reference box holding the KV-cache reuse state (WS6) that must cross `ModelContainer`'s
+/// actor boundary via `container.perform`'s `@Sendable` closure.
+///
+/// `@unchecked Sendable` is deliberate, not an oversight: `InferenceEngine` is the sole owner,
+/// is itself `@MainActor`, and always cancels the previous `currentTask` before starting a new
+/// one, so only one completion in flight ever touches this box. `ModelContainer.perform` adds a
+/// second layer of serialization on top (its own internal actor executes one closure at a
+/// time). The MLXArrays inside `kvCache` are therefore never accessed from two execution
+/// contexts concurrently, which is exactly the property `Sendable` exists to guarantee — we're
+/// just asserting it by hand instead of getting it from the type system, the same trick
+/// MLXLMCommon's own (package-internal, not importable here) `SendableBox` uses.
+private final class PromptCacheBox: @unchecked Sendable {
+    /// Full token sequence (instruction + prefix) the current `kvCache` was built from.
+    var tokens: [Int] = []
+    /// The KV cache continued across debounce fires, or nil if there's nothing cached.
+    var kvCache: [KVCache]?
+
+    func invalidate() {
+        tokens = []
+        kvCache = nil
+    }
+}
+
 @MainActor
 final class InferenceEngine {
     private let logger = Logger(subsystem: "app.typeahead", category: "InferenceEngine")
+    private let signposter = OSSignposter(subsystem: "app.typeahead", category: "KVCache")
 
     private(set) var isLoaded = false
     private var container: ModelContainer?
     private var currentTask: Task<Void, Never>?
     private var loadedModelID: String = ""
     private var lastLoggedLoadPct = -1
+
+    // WS6: KV-cache reuse across debounce fires. See PromptCacheValidity (pure, SPM-tested) for
+    // the reuse-vs-rebuild decision and PromptCacheBox's doc comment for why this needs its own
+    // Sendable box. Invalidated explicitly on model unload (below), focus change
+    // (AppDependencies.handleFocusChange -> invalidateCache()), and Tab-accept insertion
+    // (AppDelegate's .acceptWord case -> invalidateCache()) — anything that changes the field's
+    // text out from under the cached token prefix.
+    private let promptCacheBox = PromptCacheBox()
+
+    /// Drops the KV cache and its associated token history. Safe to call even with no model
+    /// loaded or no cache built yet. See the call sites listed on `promptCacheBox` above.
+    func invalidateCache() {
+        promptCacheBox.invalidate()
+    }
 
     // Instruction building is in PersonalizationEngine (pure Swift, SPM-testable without MLXLLM).
     // InferenceEngine delegates to it so the logic can be unit-tested independently.
@@ -100,6 +139,7 @@ final class InferenceEngine {
         container = nil
         isLoaded = false
         loadedModelID = ""
+        invalidateCache()
     }
 
     // MARK: - Completion
@@ -129,30 +169,63 @@ final class InferenceEngine {
         // and left open, so the instruct model continues the user's own text in-distribution.
         // Raw text made it loop; chat-replying made it ignore the text. The model emits only
         // NEW tokens, so the output IS the continuation — ghostText skips prefix-alignment.
+        //
+        // WS6: rather than the old two-step container.prepare(input:) + container.generate(...)
+        // (which always re-tokenizes and re-prefills the FULL prompt), tokenization and cache
+        // reuse now happen together inside one container.perform block so the reuse-vs-rebuild
+        // decision and the actual prefill see the exact same token sequence. See PromptCacheBox
+        // for why the cache state is boxed, and PromptCacheValidity for the decision logic.
+        let box = promptCacheBox
+        let signposter = signposter
+        let messages: [[String: any Sendable]] = [
+            ["role": "system", "content": instruction],
+            ["role": "user", "content": prompt],
+        ]
+        // No repetitionPenalty: it penalizes prompt tokens too, which pushed the
+        // model toward newline/whitespace output. The maxWords cap handles visible
+        // rambling instead. Slightly higher temperature gives real words a better
+        // chance over a deterministic newline on short, ambiguous prefixes.
+        let params = GenerateParameters(
+            maxTokens: maxTokens,
+            temperature: 0.5,
+            topP: 0.9
+        )
+
         currentTask = Task {
             do {
-                let userInput = UserInput(prompt: .chat([
-                    Chat.Message.system(instruction),
-                    Chat.Message.user(prompt),
-                ]))
+                let signpostID = signposter.makeSignpostID()
+                let interval = signposter.beginInterval("complete", id: signpostID)
 
-                // container.prepare(input:) uses Swift's `consuming sending` ownership
-                // transfer to safely move the non-Sendable LMInput across actor boundaries.
-                let input = try await container.prepare(input: userInput)
+                let stream = try await container.perform { context -> AsyncStream<Generation> in
+                    let newTokens = try context.tokenizer.applyChatTemplate(messages: messages)
+                    let decision = PromptCacheValidity.decide(cachedTokens: box.tokens, newTokens: newTokens)
+
+                    let inputTokens: [Int]
+                    let cache: [KVCache]
+                    switch decision {
+                    case .reuse(let deltaTokens) where box.kvCache != nil:
+                        inputTokens = deltaTokens
+                        cache = box.kvCache!
+                        signposter.emitEvent("cacheReuse", id: signpostID, "deltaTokens=\(deltaTokens.count) totalTokens=\(newTokens.count)")
+                    case .reuse, .rebuild:
+                        inputTokens = newTokens
+                        cache = context.model.newCache(parameters: params)
+                        signposter.emitEvent("cacheRebuild", id: signpostID, "totalTokens=\(newTokens.count)")
+                    }
+
+                    let lmInput = LMInput(tokens: MLXArray(inputTokens))
+                    let generated = try MLXLMCommon.generate(
+                        input: lmInput, cache: cache, parameters: params, context: context)
+
+                    box.kvCache = cache
+                    box.tokens = newTokens
+                    return generated
+                }
+
+                signposter.endInterval("complete", interval)
 
                 guard !Task.isCancelled else { return }
 
-                // No repetitionPenalty: it penalizes prompt tokens too, which pushed the
-                // model toward newline/whitespace output. The maxWords cap handles visible
-                // rambling instead. Slightly higher temperature gives real words a better
-                // chance over a deterministic newline on short, ambiguous prefixes.
-                let params = GenerateParameters(
-                    maxTokens: maxTokens,
-                    temperature: 0.5,
-                    topP: 0.9
-                )
-
-                let stream = try await container.generate(input: input, parameters: params)
                 var raw = ""
                 var lastGhost = ""
 
