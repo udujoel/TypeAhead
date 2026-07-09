@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case setup, general, apps, personalization, statistics, about
+    case setup, general, apps, personalization, statistics, diagnostics, about
     var id: String { rawValue }
     var label: String {
         switch self {
@@ -10,6 +10,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .apps:              "Apps"
         case .personalization:  "Personalization"
         case .statistics:       "Statistics"
+        case .diagnostics:      "Diagnostics"
         case .about:            "About"
         }
     }
@@ -20,6 +21,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .apps:              "app.badge.checkmark.fill"
         case .personalization:  "person.crop.circle.fill"
         case .statistics:       "chart.bar.fill"
+        case .diagnostics:      "wrench.and.screwdriver.fill"
         case .about:            "info.circle.fill"
         }
     }
@@ -30,6 +32,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .apps:              .indigo
         case .personalization:  .purple
         case .statistics:       .orange
+        case .diagnostics:      .teal
         case .about:            .gray
         }
     }
@@ -60,6 +63,7 @@ struct SettingsWindow: View {
                 case .apps:              AppsView()
                 case .personalization:  PersonalizationView()
                 case .statistics:       StatisticsView()
+                case .diagnostics:      DiagnosticsView()
                 case .about:            AboutView()
                 }
             }
