@@ -13,3 +13,4 @@ build/
 .claude/
 .playwright-mcp/
 /*.png
+.swiftpm/

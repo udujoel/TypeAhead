@@ -61,9 +61,15 @@ struct GeneralView: View {
                 }
             }
 
-            Section("Context") {
+            Section {
                 Toggle("Use Clipboard Context", isOn: $s.useClipboardContext)
-                Toggle("Use Screenshot Context", isOn: $s.useScreenshotContext)
+                Toggle("Use Screen Context", isOn: $s.useScreenshotContext)
+            } header: {
+                Text("Context")
+            } footer: {
+                Text("Screen Context reads on-screen text with on-device OCR to sharpen suggestions. Everything stays on this Mac — nothing is ever uploaded.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("App") {
