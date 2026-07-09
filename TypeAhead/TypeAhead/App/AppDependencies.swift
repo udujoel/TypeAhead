@@ -282,6 +282,23 @@ final class AppDependencies {
         // ML inference requires the model to be loaded.
         guard inferenceEngine.isLoaded else { return }
 
+        // Placement confidence (WS5): read the caret placement BEFORE any of the expensive
+        // ML-path work below (screen-context OCR capture, prompt assembly, personalization,
+        // and above all the MLX generation itself). A `.suppress` placement means
+        // `OverlayController.showOrUpdateML` would no-op every streamed token — the ghost can
+        // never paint — so running inference would burn battery/latency for nothing. Record the
+        // same `placementSuppressed` event `OverlayController` fires from its no-op show (that
+        // call site is never reached on this path once we early-return here), then bail.
+        // Reading the rect this early does mean it's a few hundred ms staler by first paint than
+        // the pre-WS5 read-just-before-complete — acceptable: the rect is already held fixed
+        // across the whole streaming generation anyway.
+        guard let placement = accessibilityManager.cursorScreenRect() else { return }
+        logger.info("placement tier=\(placement.tier.rawValue, privacy: .public) presentation=\(String(describing: placement.presentation), privacy: .public)")
+        guard CompletionCoordinator.shouldRunInference(presentation: placement.presentation) else {
+            recordSuggestionEvent(kind: .rejected, ghostText: "", metadata: "placementSuppressed")
+            return
+        }
+
         // Screen context: OCR the frontmost window to give the model ambient topic signal.
         // Cache for 2s so rapid keystrokes don't re-capture on every completion.
         let screenContext: String?
@@ -361,14 +378,14 @@ final class AppDependencies {
             appStyleInstruction: currentPolicy.styleInstruction
         )
 
-        guard let placement = accessibilityManager.cursorScreenRect() else { return }
+        // Placement (rect + tier) was read before the awaits above — see the WS5 early-out at the
+        // top of the ML path.
         let cursorRect = placement.rect
         let fontSize = accessibilityManager.focusedFontSize()
         // Snapshot the epoch this generation belongs to (set at the top, before the awaits above).
         // The onUpdate hop below runs on a *later* main-actor turn, so a focus change can land in
         // between — guard the paint on the epoch so a stale ghost can't flash in the new field.
         let generationEpoch = cycleEpoch
-        logger.info("placement tier=\(placement.tier.rawValue, privacy: .public) presentation=\(String(describing: placement.presentation), privacy: .public)")
         logger.debug("completion request: source=\(source, privacy: .public) prompt='\(prompt.suffix(60), privacy: .private)' suffix='\(suffix.prefix(40), privacy: .private)' persona=\(personaNote != nil, privacy: .public) cursor=\(cursorRect.debugDescription, privacy: .public)")
         let promptTail = String(context.textBeforeCursor.suffix(40))
 
@@ -395,10 +412,9 @@ final class AppDependencies {
                 )
                 // Only the FIRST paint of a generation cycle counts as "shown" — every subsequent
                 // streamed token update goes through the update-in-place branch inside
-                // `showOrUpdateML`, which intentionally does not re-record. When the placement is
-                // suppressed, `showOrUpdateML` always returns false (never paints), so this branch
-                // naturally never fires a `.shown` event for it — the suppression telemetry comes
-                // from `OverlayController.onPlacementSuppressed` instead.
+                // `showOrUpdateML`, which intentionally does not re-record. A `.suppress`
+                // presentation never reaches here at all — the WS5 early-out above returns before
+                // inference even starts (and records `placementSuppressed` itself).
                 if firstPaint {
                     logger.debug("overlay.show '\(full.prefix(40), privacy: .private)' at \(cursorRect.origin.debugDescription, privacy: .public)")
                     recordSuggestionEvent(

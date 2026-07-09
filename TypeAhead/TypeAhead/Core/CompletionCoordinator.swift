@@ -55,6 +55,19 @@ enum CompletionCoordinator {
         return .none
     }
 
+    // MARK: - Placement suppress early-out (WS5)
+
+    /// Whether the ML inference path should run at all given the placement presentation for this
+    /// cycle. A `.suppress` placement means the ghost can never paint (`OverlayController` would
+    /// no-op every streamed token), so starting an MLX generation would burn battery/latency for
+    /// nothing — `runCompletion` early-returns instead, BEFORE building the prompt or calling
+    /// `inferenceEngine.complete`. `.inline` and `.pinnedBar` both proceed. The spell/emoji fast
+    /// paths don't consult this: they have no inference cost, and their suppress handling (no-op
+    /// show + `placementSuppressed` telemetry inside `OverlayController`) already short-circuits.
+    static func shouldRunInference(presentation: PlacementPresentation) -> Bool {
+        presentation != .suppress
+    }
+
     // MARK: - Screen-context cache TTL
 
     /// One cached OCR screen-context read: the extracted text, when it was captured, and which

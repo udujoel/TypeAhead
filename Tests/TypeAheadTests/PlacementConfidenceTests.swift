@@ -22,6 +22,22 @@ import Testing
         #expect(PlacementPolicy.presentation(for: .unknown) == .suppress)
     }
 
+    // MARK: - Inference early-out (CompletionCoordinator.shouldRunInference)
+
+    @Test func inferenceRunsForInlinePresentation() {
+        #expect(CompletionCoordinator.shouldRunInference(presentation: .inline))
+    }
+
+    @Test func inferenceRunsForPinnedBarPresentation() {
+        #expect(CompletionCoordinator.shouldRunInference(presentation: .pinnedBar))
+    }
+
+    @Test func inferenceSkippedForSuppressedPresentation() {
+        // A suppressed placement can never paint, so the ML path must bail before starting an
+        // MLX generation (wasted battery/latency otherwise).
+        #expect(!CompletionCoordinator.shouldRunInference(presentation: .suppress))
+    }
+
     @Test func everyTierHasAnExplicitMapping() {
         // Guards against a new PlacementTier case silently falling through to a default —
         // there is no default branch in PlacementPolicy.presentation, so this is really just
