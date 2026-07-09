@@ -20,8 +20,8 @@ struct PersonalizationView: View {
 
                 Text("""
                     TypeAhead can record words you accept to improve future suggestions for you. \
-                    All collected data is encrypted and stored locally on your Mac — nothing is \
-                    sent anywhere.
+                    All collected data is stored locally on your Mac and never uploaded — nothing \
+                    is sent anywhere.
                     """)
                     .font(.caption)
                     .foregroundStyle(.secondary)
