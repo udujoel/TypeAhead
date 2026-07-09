@@ -282,4 +282,62 @@ import Testing
         )
         #expect(ghost.isEmpty)
     }
+
+    // MARK: - Suffix awareness (WS4): don't duplicate text already after the cursor
+
+    @Test func trimSuffixOverlapCutsDuplicatedTail() {
+        // prefix "The quick brown ", suffix " jumps over" — ghost "fox jumps over" → "fox".
+        #expect(GhostText.trimSuffixOverlap(ghost: "fox jumps over", suffix: " jumps over") == "fox")
+    }
+
+    @Test func trimSuffixOverlapNoOverlapLeavesGhostAlone() {
+        #expect(GhostText.trimSuffixOverlap(ghost: "fox jumps", suffix: "the end.") == "fox jumps")
+    }
+
+    @Test func trimSuffixOverlapEmptySuffixLeavesGhostAlone() {
+        #expect(GhostText.trimSuffixOverlap(ghost: "fox jumps", suffix: "") == "fox jumps")
+    }
+
+    @Test func trimSuffixOverlapDoesNotSliceMidWord() {
+        // "over" is a coincidental substring of the suffix's start but not on a word
+        // boundary within "leftover" — must not chop it to "left".
+        #expect(GhostText.trimSuffixOverlap(ghost: "leftover", suffix: "over there") == "leftover")
+    }
+
+    @Test func trimSuffixOverlapFullMatchYieldsEmpty() {
+        #expect(GhostText.trimSuffixOverlap(ghost: "jumps over", suffix: "jumps over there") == "")
+    }
+
+    @Test func buildTrimsGhostThatDuplicatesSuffix() {
+        // End-to-end through build(): mid-document edit where the model's continuation
+        // runs straight into text that's already after the cursor.
+        let ghost = GhostText.build(
+            typed: "The quick brown ",
+            raw: "fox jumps over",
+            isFillInMiddle: true,
+            suffix: " jumps over"
+        )
+        #expect(ghost == "fox")
+    }
+
+    @Test func buildWithEmptySuffixUnchangedFromNoSuffixPath() {
+        // Empty suffix (cursor at end of text, or keystroke-buffer fallback) — behavior
+        // must match calling build() without a suffix at all.
+        let withEmptySuffix = GhostText.build(typed: "wor", raw: "king", isFillInMiddle: true, suffix: "")
+        let withoutSuffixArg = GhostText.build(typed: "wor", raw: "king", isFillInMiddle: true)
+        #expect(withEmptySuffix == withoutSuffixArg)
+        #expect(withEmptySuffix == "king")
+    }
+
+    @Test func buildSuffixTrimCanEmptyOutGhostAndRejectIt() {
+        // The whole ghost duplicates the suffix — nothing new to show, so build() must
+        // reject it (empty string), not surface a zero-content "completion".
+        let ghost = GhostText.build(
+            typed: "The quick brown fox ",
+            raw: "jumps over",
+            isFillInMiddle: true,
+            suffix: "jumps over the lazy dog"
+        )
+        #expect(ghost.isEmpty)
+    }
 }

@@ -10,11 +10,21 @@ enum GhostText {
     /// - Parameters:
     ///   - typed: the text already before the cursor (alignment mode only).
     ///   - raw: the model's raw output so far.
-    ///   - isFillInMiddle: when true the model's output already IS the continuation
-    ///     (raw-continuation / fill-in-middle), so prefix-alignment is skipped.
+    ///   - isFillInMiddle: despite the name, this does NOT mean "a suffix is known" — it means
+    ///     "the generation used assistant-prefill" (see InferenceEngine/HFBridge): the model's
+    ///     raw output already IS the continuation, so prefix-alignment, first-line trimming, and
+    ///     current-word-restatement stripping apply. InferenceEngine's only completion path uses
+    ///     prefill unconditionally, so this is true on every real call regardless of whether the
+    ///     cursor has trailing text. Suffix-awareness is the separate `suffix` parameter below —
+    ///     see `trimSuffixOverlap`. Left named/typed as-is (rather than renamed to e.g.
+    ///     `isPrefillMode`) to keep this change surgical; a future cleanup could split it out.
     ///   - maxWords: cap the displayed words to this many (0 = no cap). Enforces the
     ///     user's completion-length setting regardless of how much the model generates.
-    static func build(typed: String, raw: String, isFillInMiddle: Bool = false, maxWords: Int = 0) -> String {
+    ///   - suffix: text already after the cursor (from `ContextBuilder.buildSuffix`), when
+    ///     known. When non-empty, the tail of the ghost is trimmed if it overlaps the head
+    ///     of the suffix — see `trimSuffixOverlap`. Empty suffix (cursor at end of text, or
+    ///     the keystroke-buffer fallback which has no AX suffix) leaves output unchanged.
+    static func build(typed: String, raw: String, isFillInMiddle: Bool = false, maxWords: Int = 0, suffix: String = "") -> String {
         let cleaned = CompletionTextSanitizer.sanitize(raw)
         guard !cleaned.isEmpty else { return "" }
 
@@ -66,6 +76,15 @@ enum GhostText {
 
         // Quality gate: reject clearly-junk completions before showing them.
         guard isUsableGhost(continuation) else { return "" }
+
+        // The model is now suffix-aware (its instruction includes what follows the cursor —
+        // see PersonalizationEngine.buildInstruction), but small models still sometimes lead
+        // straight into a restatement of it. Trim that overlap so Tab doesn't duplicate text
+        // that's already there.
+        if !suffix.isEmpty {
+            continuation = trimSuffixOverlap(ghost: continuation, suffix: suffix)
+            guard isUsableGhost(continuation) else { return "" }
+        }
 
         return continuation
     }
@@ -184,6 +203,39 @@ enum GhostText {
 
         // 5. No alignment — refuse to surface a full restatement.
         return ""
+    }
+
+    /// Trims a trailing overlap between `ghost` and the head of `suffix` — the text already
+    /// sitting after the cursor. E.g. prefix "The quick brown ", suffix " jumps over", ghost
+    /// "fox jumps over" → "fox": the model correctly continued with "fox" but then re-typed
+    /// words that are already there, so the overlapping tail is cut.
+    ///
+    /// Only trims on a word boundary (the character before the cut is whitespace, or the
+    /// entire ghost overlaps) so a partial-word coincidence can't slice a word in half —
+    /// same caution as `stripCurrentWordRestatement`. Comparison is case-insensitive and
+    /// against whitespace-normalized suffix so minor formatting differences don't block it.
+    static func trimSuffixOverlap(ghost: String, suffix: String) -> String {
+        let normalizedSuffix = normalizeWhitespace(suffix)
+        guard !ghost.isEmpty, !normalizedSuffix.isEmpty else { return ghost }
+
+        let ghostLower = ghost.lowercased()
+        let suffixLower = normalizedSuffix.lowercased()
+
+        var k = min(ghostLower.count, suffixLower.count)
+        while k > 0 {
+            let suffixPrefix = String(suffixLower.prefix(k))
+            if ghostLower.hasSuffix(suffixPrefix) {
+                let dropIndex = ghost.index(ghost.endIndex, offsetBy: -k)
+                let onWordBoundary = dropIndex == ghost.startIndex
+                    || ghost[ghost.index(before: dropIndex)] == " "
+                if onWordBoundary {
+                    let trimmed = String(ghost[..<dropIndex])
+                    return trimmed.trimmingCharacters(in: .whitespaces)
+                }
+            }
+            k -= 1
+        }
+        return ghost
     }
 
     /// Largest k where the last k chars of `typed` equal the first k chars of `out`.

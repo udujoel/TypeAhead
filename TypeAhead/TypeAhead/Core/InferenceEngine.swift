@@ -160,7 +160,7 @@ final class InferenceEngine {
                     if Task.isCancelled { break }
                     if case .chunk(let text) = generation {
                         raw += text
-                        let ghost = InferenceEngine.ghostText(typed: prompt, raw: raw, isFillInMiddle: true, maxWords: maxWords)
+                        let ghost = InferenceEngine.ghostText(typed: prompt, raw: raw, isFillInMiddle: true, maxWords: maxWords, suffix: suffix)
                         if !ghost.isEmpty { lastGhost = ghost; onUpdate(ghost) }
                         // Early stop: the overlay only shows the first line (≤ maxWords), so once
                         // that's settled there's nothing more to display — stop generating to keep
@@ -186,7 +186,7 @@ final class InferenceEngine {
 
     /// Delegates to `GhostText` (pure, testable). Kept as a thin wrapper so the
     /// streaming loop above reads naturally.
-    nonisolated static func ghostText(typed: String, raw: String, isFillInMiddle: Bool = false, maxWords: Int = 0) -> String {
-        GhostText.build(typed: typed, raw: raw, isFillInMiddle: isFillInMiddle, maxWords: maxWords)
+    nonisolated static func ghostText(typed: String, raw: String, isFillInMiddle: Bool = false, maxWords: Int = 0, suffix: String = "") -> String {
+        GhostText.build(typed: typed, raw: raw, isFillInMiddle: isFillInMiddle, maxWords: maxWords, suffix: suffix)
     }
 }
