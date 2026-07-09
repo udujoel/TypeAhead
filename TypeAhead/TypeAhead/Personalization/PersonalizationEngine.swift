@@ -57,11 +57,21 @@ final class PersonalizationEngine {
     ///
     /// Format notes:
     /// - Custom instructions are user prose (first, so they're most prominent).
+    /// - `appStyleInstruction` is the focused app's per-app style override (e.g. "Mail:
+    ///   professional", "Slack: casual") from `AppPolicyResolver` — appended after custom
+    ///   instructions so it can refine/override the general persona for this specific app.
     /// - History examples use a bracket/pipe format (NOT a prose sentence) to reduce the
     ///   chance that a small model echoes them as text to generate. A sentence like
     ///   "Words the user often accepts: X, Y." looks continuable — small models generate
     ///   it verbatim. The bracket format signals metadata, not text.
-    nonisolated static func buildPersonaNote(customInstructions: String, examples: [String]) -> String? {
+    /// - The combined note (all sources together) is capped to ~200 chars so per-app style
+    ///   instructions can't balloon the prompt for small models — a tighter budget than the
+    ///   400-char per-field cap below, which only bounds an individual source.
+    nonisolated static func buildPersonaNote(
+        customInstructions: String,
+        examples: [String],
+        appStyleInstruction: String? = nil
+    ) -> String? {
         var parts: [String] = []
 
         let trimmed = customInstructions.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -69,6 +79,10 @@ final class PersonalizationEngine {
             // Limit to 400 chars so a long custom instruction doesn't balloon the prompt.
             let capped = trimmed.count > 400 ? String(trimmed.prefix(400)) + "…" : trimmed
             parts.append(capped)
+        }
+
+        if let style = appStyleInstruction?.trimmingCharacters(in: .whitespacesAndNewlines), !style.isEmpty {
+            parts.append(style)
         }
 
         if !examples.isEmpty {
@@ -79,6 +93,8 @@ final class PersonalizationEngine {
         }
 
         guard !parts.isEmpty else { return nil }
-        return parts.joined(separator: "\n")
+        let combined = parts.joined(separator: "\n")
+        guard combined.count > 200 else { return combined }
+        return String(combined.prefix(200)) + "…"
     }
 }

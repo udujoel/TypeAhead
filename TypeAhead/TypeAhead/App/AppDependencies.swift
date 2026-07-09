@@ -28,6 +28,11 @@ final class AppDependencies {
     /// it once `focusEpoch` has moved past this (focus drifted to another field).
     var suggestionEpoch: Int = 0
 
+    /// The resolved per-app policy for the frontmost app, recomputed at the top of every
+    /// `runCompletion` cycle. `AppDelegate`'s Tab handler reads `tabKeyDisabled` from this to
+    /// decide whether to accept or pass Tab through as a literal keystroke (see AppPolicyResolver).
+    var currentPolicy = AppPolicyResolver.resolve(globalCompletionsEnabled: true, excludedByList: false, override: nil)
+
     init() {
         // Wire on-device Vision caret detection for Electron/Chromium apps with unreliable AX
         // caret bounds. Capture lives here so the ScreenCaptureKit dependency stays app-only.
@@ -75,11 +80,28 @@ final class AppDependencies {
     var emojiReplacementLength: Int = 0
 
     private func runCompletion() async {
-        // Per-app exception list takes precedence over the global toggle (CLAUDE.md).
-        // Check it first — before any context reads or inference — so excluded apps pay zero cost.
-        if let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
-           settings.exceptionList.isExcluded(bundleID: bundleID) {
-            return
+        // Resolve the effective per-app policy first — before any context reads or inference —
+        // so excluded/disabled apps pay zero cost. Auto-register the app (first sighting) so it
+        // shows up in the Apps settings pane, then combine the legacy exclusion list with any
+        // explicit per-app override via AppPolicyResolver (override always wins; see CLAUDE.md
+        // "Per-app exception list always takes precedence over global toggle" — the resolver
+        // generalizes that rule to also honor an explicit per-app override).
+        if let frontApp = NSWorkspace.shared.frontmostApplication, let bundleID = frontApp.bundleIdentifier {
+            settings.registerAppIfNeeded(bundleID: bundleID, displayName: frontApp.localizedName ?? bundleID)
+            let excluded = settings.exceptionList.isExcluded(bundleID: bundleID)
+            let override = settings.appRegistry[bundleID]?.override
+            currentPolicy = AppPolicyResolver.resolve(
+                globalCompletionsEnabled: settings.completionsEnabled,
+                excludedByList: excluded,
+                override: override
+            )
+            guard currentPolicy.completionsEnabled else { return }
+        } else {
+            currentPolicy = AppPolicyResolver.resolve(
+                globalCompletionsEnabled: settings.completionsEnabled,
+                excludedByList: false,
+                override: nil
+            )
         }
 
         // Focus hygiene: if the user moved to a different field since the last cycle, drop stale
@@ -214,7 +236,8 @@ final class AppDependencies {
         }
         let personaNote = PersonalizationEngine.buildPersonaNote(
             customInstructions: settings.customInstructions,
-            examples: historyExamples
+            examples: historyExamples,
+            appStyleInstruction: currentPolicy.styleInstruction
         )
 
         guard let cursorRect = accessibilityManager.cursorScreenRect() else { return }

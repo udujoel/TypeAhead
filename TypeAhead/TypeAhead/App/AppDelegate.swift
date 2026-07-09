@@ -78,6 +78,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // • New-word (leading space in ghost): append normally with a word separator.
         deps.keyMonitor.onTabPressed = { [weak deps] in
             guard let deps else { return }
+
+            // Per-app "Disable Tab accept" (AppPolicyResolver.tabKeyDisabled): the event tap
+            // already swallowed this Tab (it only consults isOverlayVisible, see KeyEventMonitor
+            // CLAUDE.md notes), so re-inject a literal tab character to preserve the app's own
+            // Tab behavior (e.g. indent in a code editor) instead of accepting the suggestion.
+            if deps.currentPolicy.tabKeyDisabled {
+                deps.keyMonitor.isOverlayVisible = false
+                deps.completionOverlay.hide(animated: false)
+                deps.accessibilityManager.injectText("\t")
+                return
+            }
+
             let ghost = deps.completionOverlay.currentText
             guard !ghost.isEmpty else {
                 deps.keyMonitor.isOverlayVisible = false
@@ -156,7 +168,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             let accepted = firstWord
             deps.keyMonitor.keystrokeBuffer.appendAccepted(accepted + " ")
-            Task { @MainActor in try? deps.historyStore.record(accepted: accepted, appName: "") }
+            let appName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
+            Task { @MainActor in try? deps.historyStore.record(accepted: accepted, appName: appName) }
 
             // Keep the rest of the suggestion visible for the next Tab.
             let remaining = parts.count > 1 ? String(parts[1]) : ""

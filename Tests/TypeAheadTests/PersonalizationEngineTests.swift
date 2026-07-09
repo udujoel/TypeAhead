@@ -92,8 +92,36 @@ import Testing
     @Test func personaNoteCapsTooLongInstructions() {
         let long = String(repeating: "a", count: 500)
         let note = PersonalizationEngine.buildPersonaNote(customInstructions: long, examples: [])
-        // Should not exceed the 400-char cap + ellipsis
-        #expect((note?.count ?? 0) < 420)
+        // Should not exceed the ~200-char combined cap + ellipsis
+        #expect((note?.count ?? 0) < 220)
+    }
+
+    @Test func personaNoteIncludesAppStyleInstruction() {
+        let note = PersonalizationEngine.buildPersonaNote(
+            customInstructions: "",
+            examples: [],
+            appStyleInstruction: "Keep it terse and casual."
+        )
+        #expect(note?.contains("Keep it terse and casual.") == true)
+    }
+
+    @Test func personaNoteIgnoresEmptyAppStyleInstruction() {
+        let note = PersonalizationEngine.buildPersonaNote(
+            customInstructions: "I'm a writer.",
+            examples: [],
+            appStyleInstruction: "   "
+        )
+        #expect(note == "I'm a writer.")
+    }
+
+    @Test func personaNoteCapsCombinedTextAroundTwoHundredChars() {
+        let long = String(repeating: "b", count: 300)
+        let note = PersonalizationEngine.buildPersonaNote(
+            customInstructions: "Custom instructions here.",
+            examples: ["therefore", "however"],
+            appStyleInstruction: long
+        )
+        #expect((note?.count ?? 0) <= 201)
     }
 
     // MARK: - PersonalizationEngine.buildInstruction (delegates from InferenceEngine)
