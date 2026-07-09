@@ -12,6 +12,11 @@ final class AppDependencies {
     let inferenceEngine = InferenceEngine()
     let completionOverlay = CompletionOverlay()
     let historyStore = HistoryStore()
+    /// Single owner of overlay mode (WS3) — replaces the formerly-scattered
+    /// `spellCorrectionLength` / `emojiReplacementLength` / `suggestionEpoch` vars plus manual
+    /// `keyMonitor.isOverlayVisible` bookkeeping at each call site. `AppDelegate` and
+    /// `runCompletion` below go through this for every overlay show/update/hide.
+    lazy var overlayController = OverlayController(panel: completionOverlay, keyMonitor: keyMonitor)
     let eventStore = SuggestionEventStore()
     /// Last-50 full-detail ring buffer for the Diagnostics settings pane. In-memory only —
     /// never persisted (privacy: full prompt/ghost text must never touch disk). See
@@ -29,12 +34,10 @@ final class AppDependencies {
 
     /// Bumps whenever focus moves to a different app/field. Guards against off-topic suggestions:
     /// stale context is dropped on a change, and a suggestion stamped with an earlier epoch can't
-    /// be accepted into a different field. See `handleFocusChange()` / `suggestionEpoch`.
+    /// be accepted into a different field. See `handleFocusChange()`. The epoch a shown suggestion
+    /// was generated in now lives on `overlayController.mode` itself (WS3) rather than in a
+    /// separate `suggestionEpoch` var — `OverlayStateMachine.acceptRequested` reads it from there.
     let focusEpoch = FocusEpoch()
-
-    /// The epoch the currently-shown suggestion was generated in. `onTabPressed` refuses to insert
-    /// it once `focusEpoch` has moved past this (focus drifted to another field).
-    var suggestionEpoch: Int = 0
 
     /// The resolved per-app policy for the frontmost app, recomputed at the top of every
     /// `runCompletion` cycle. `AppDelegate`'s Tab handler reads `tabKeyDisabled` from this to
@@ -67,9 +70,8 @@ final class AppDependencies {
     func handleFocusChange() {
         keyMonitor.keystrokeBuffer.clear()
         inferenceEngine.cancelCurrent()
-        if keyMonitor.isOverlayVisible {
-            keyMonitor.isOverlayVisible = false
-            completionOverlay.hide(animated: false)
+        if overlayController.mode.isVisible {
+            overlayController.hide(animated: false)
         }
         focusEpoch.focusChanged()
     }
@@ -117,16 +119,6 @@ final class AppDependencies {
 
     private var screenContextCache: (text: String, at: Date, bundleID: String)?
     private let screenContextCacheTTL: TimeInterval = 2.0
-
-    /// Non-zero when the overlay shows a spelling correction rather than an ML completion.
-    /// Counts the characters of the misspelled word that Tab must replace.
-    /// Reset to 0 at the start of every runCompletion cycle.
-    var spellCorrectionLength: Int = 0
-
-    /// Non-zero when the current overlay shows an emoji suggestion rather than an ML
-    /// completion. Counts the characters of the `:shortcode` that Tab must replace
-    /// (e.g. `:wave` → 5). Reset to 0 at the start of every runCompletion cycle.
-    var emojiReplacementLength: Int = 0
 
     private func runCompletion() async {
         // Latency measurement (WS2): stamped here, at the moment the debounced pipeline fires
@@ -176,11 +168,16 @@ final class AppDependencies {
             handleFocusChange()
         }
         // Stamp every suggestion shown this cycle (spell/emoji/ML) with the current epoch so it
-        // can't be accepted after a later focus change lands it in the wrong field.
-        suggestionEpoch = focusEpoch.epoch
-
-        spellCorrectionLength = 0
-        emojiReplacementLength = 0
+        // can't be accepted after a later focus change lands it in the wrong field. Read fresh
+        // here (rather than cached) and passed to each show* call below — `OverlayController`
+        // stores it on the mode itself now (WS3), replacing the old standalone `suggestionEpoch`
+        // var. No explicit "reset spell/emoji flags" is needed either: the overlay mode is fully
+        // derived through explicit show/hide transitions (never a stale flag to zero out), and
+        // any previous spell/emoji ghost was already hidden by `onKeystroke` the moment the user
+        // typed anything (spell/emoji ghosts never type-through past divergence — see
+        // `OverlayStateMachine.keystroke`), so by the time a new cycle reaches this point a
+        // leftover spell/emoji mode can't still be showing.
+        let cycleEpoch = focusEpoch.epoch
 
         // Read the text around the cursor. Prefer the Accessibility API (full
         // field contents); fall back to the keystroke buffer for apps where AX
@@ -207,11 +204,15 @@ final class AppDependencies {
         if let fix = TypoDetector.correction(in: context.textBeforeCursor),
            let cursorRect = accessibilityManager.cursorScreenRect() {
             let fontSize = accessibilityManager.focusedFontSize()
-            spellCorrectionLength = fix.misspelledLength
             inferenceEngine.cancelCurrent()
             logger.debug("spell correction: '\(fix.original, privacy: .private)' -> '\(fix.suggestion, privacy: .private)'")
-            completionOverlay.show(text: fix.suggestion, near: cursorRect, fontSize: fontSize)
-            keyMonitor.isOverlayVisible = true
+            overlayController.showSpell(
+                ghost: fix.suggestion,
+                replaceLen: fix.misspelledLength,
+                epoch: cycleEpoch,
+                cursorRect: cursorRect,
+                fontSize: fontSize
+            )
             recordSuggestionEvent(
                 kind: .shown,
                 promptTail: String(context.textBeforeCursor.suffix(40)),
@@ -224,19 +225,23 @@ final class AppDependencies {
 
         // Emoji fast path: when the user types `:shortcode`, bypass ML inference entirely
         // and surface the matching emoji as ghost text.  Tab acceptance uses replaceCurrentWord
-        // to swap the `:shortcode` for the emoji.  emojiReplacementLength encodes how many
-        // characters to delete (1 colon + shortcode length).
+        // to swap the `:shortcode` for the emoji.  replaceLen encodes how many characters to
+        // delete (1 colon + shortcode length).
         // Runs even when no model is loaded — emoji lookup needs no inference engine.
         if EmojiSuggester.isEmojiMode(textBeforeCursor: context.textBeforeCursor),
            let shortcode = EmojiSuggester.shortcode(from: context.textBeforeCursor),
            let emoji = EmojiSuggester.suggest(shortcode: shortcode).first,
            let cursorRect = accessibilityManager.cursorScreenRect() {
             let fontSize = accessibilityManager.focusedFontSize()
-            emojiReplacementLength = 1 + shortcode.count  // ":" + shortcode
             inferenceEngine.cancelCurrent()
             logger.debug("emoji suggestion for shortcode '\(shortcode, privacy: .private)' at \(cursorRect.origin.debugDescription, privacy: .public)")
-            completionOverlay.show(text: emoji, near: cursorRect, fontSize: fontSize)
-            keyMonitor.isOverlayVisible = true
+            overlayController.showEmoji(
+                ghost: emoji,
+                replaceLen: 1 + shortcode.count,  // ":" + shortcode
+                epoch: cycleEpoch,
+                cursorRect: cursorRect,
+                fontSize: fontSize
+            )
             recordSuggestionEvent(
                 kind: .shown,
                 promptTail: String(context.textBeforeCursor.suffix(40)),
@@ -329,7 +334,7 @@ final class AppDependencies {
         // Snapshot the epoch this generation belongs to (set at the top, before the awaits above).
         // The onUpdate hop below runs on a *later* main-actor turn, so a focus change can land in
         // between — guard the paint on the epoch so a stale ghost can't flash in the new field.
-        let generationEpoch = suggestionEpoch
+        let generationEpoch = cycleEpoch
         logger.debug("completion request: source=\(source, privacy: .public) prompt='\(prompt.suffix(60), privacy: .private)' suffix='\(suffix.prefix(40), privacy: .private)' persona=\(personaNote != nil, privacy: .public) cursor=\(cursorRect.debugDescription, privacy: .public)")
         let promptTail = String(context.textBeforeCursor.suffix(40))
 
@@ -347,15 +352,17 @@ final class AppDependencies {
                 // already hid the overlay). This callback was scheduled before that and would
                 // otherwise re-show the prior field's suggestion in the new one. Drop it.
                 guard focusEpoch.mayAccept(stampedEpoch: generationEpoch) else { return }
-                if keyMonitor.isOverlayVisible, !completionOverlay.currentText.isEmpty {
-                    completionOverlay.update(text: full, near: cursorRect)
-                } else {
+                let firstPaint = overlayController.showOrUpdateML(
+                    ghost: full,
+                    epoch: generationEpoch,
+                    cursorRect: cursorRect,
+                    fontSize: fontSize
+                )
+                // Only the FIRST paint of a generation cycle counts as "shown" — every subsequent
+                // streamed token update goes through the update-in-place branch inside
+                // `showOrUpdateML`, which intentionally does not re-record.
+                if firstPaint {
                     logger.debug("overlay.show '\(full.prefix(40), privacy: .private)' at \(cursorRect.origin.debugDescription, privacy: .public)")
-                    completionOverlay.show(text: full, near: cursorRect, fontSize: fontSize)
-                    keyMonitor.isOverlayVisible = true
-                    // Only the FIRST paint of a generation cycle counts as "shown" — the
-                    // isOverlayVisible branch above handles every subsequent streamed token
-                    // update via .update(), which intentionally does not re-record.
                     recordSuggestionEvent(
                         kind: .shown,
                         promptTail: promptTail,

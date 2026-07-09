@@ -24,42 +24,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Only when they diverge do we clear and request a fresh completion.
         deps.keyMonitor.onKeystroke = { [weak deps] event in
             guard let deps else { return }
-            let ghost = deps.completionOverlay.currentText
-            // Spell corrections are replacements, not insertions — type-through would corrupt
-            // the replacement count. Skip it entirely and let the user's keystroke dismiss the
-            // overlay and trigger a fresh completion.
-            if deps.keyMonitor.isOverlayVisible, deps.spellCorrectionLength == 0, !ghost.isEmpty,
-               let typed = event.characters, typed.count == 1, ghost.hasPrefix(typed) {
-                let remaining = String(ghost.dropFirst())
-                if remaining.isEmpty {
-                    // The user typed out the entire ghost character-by-character — it
-                    // disappears because there's nothing left to show, not because it was
-                    // explicitly accepted (Tab) or rejected (diverging keystroke/Escape).
-                    deps.keyMonitor.isOverlayVisible = false
-                    deps.completionOverlay.hide(animated: false)
-                    deps.recordSuggestionEvent(kind: .typedThrough, ghostText: ghost, metadata: "typedThrough")
-                } else if let rect = deps.accessibilityManager.cursorScreenRect() {
-                    deps.completionOverlay.update(text: remaining, near: rect)
-                } else {
-                    // Cursor position unavailable — hide rather than leaving overlay at stale
-                    // position. The suggestion is lost mid-type-through through no fault of the
-                    // user's typing, closer to a rejection than a completed type-through.
-                    deps.keyMonitor.isOverlayVisible = false
-                    deps.completionOverlay.hide(animated: false)
-                    deps.recordSuggestionEvent(kind: .rejected, ghostText: ghost, metadata: "cursorUnavailable")
-                }
+            // OverlayController resolves type-through vs diverge (OverlayStateMachine.keystroke)
+            // and applies the resulting panel/mode/isOverlayVisible mutation; the cursor rect is
+            // only actually read (an AX call) when a type-through with remaining text needs it —
+            // see the `@autoclosure` on `handleKeystroke`.
+            let effect = deps.overlayController.handleKeystroke(
+                typedChar: event.characters,
+                cursorRect: deps.accessibilityManager.cursorScreenRect()
+            )
+            switch effect {
+            case .advanced:
                 return  // typed along with the suggestion — keep it, no regeneration
-            }
-            // Dismiss the overlay regardless.
-            deps.keyMonitor.isOverlayVisible = false
-            deps.inferenceEngine.cancelCurrent()
-            deps.completionOverlay.hide(animated: false)
-            // A ghost was visible and this keystroke wasn't a type-through continuation (handled
-            // above) — the suggestion was discarded by a diverging/navigation keystroke. Only
-            // record when there was actually something to reject (most keystrokes have no ghost
-            // showing at all, and we don't want to flood the event log with no-ops).
-            if !ghost.isEmpty {
-                deps.recordSuggestionEvent(kind: .rejected, ghostText: ghost, metadata: "keystrokeDiverged")
+
+            case .typedThroughToEmpty(let ghost):
+                // The user typed out the entire ghost character-by-character — it disappears
+                // because there's nothing left to show, not because it was explicitly accepted
+                // (Tab) or rejected (diverging keystroke/Escape).
+                deps.recordSuggestionEvent(kind: .typedThrough, ghostText: ghost, metadata: "typedThrough")
+                return
+
+            case .cursorUnavailable(let ghost):
+                // Cursor position unavailable — the overlay was already hidden rather than left
+                // at a stale position. The suggestion is lost mid-type-through through no fault
+                // of the user's typing, closer to a rejection than a completed type-through.
+                deps.recordSuggestionEvent(kind: .rejected, ghostText: ghost, metadata: "cursorUnavailable")
+                return
+
+            case .diverged(let ghost):
+                deps.inferenceEngine.cancelCurrent()
+                // A ghost was visible and this keystroke wasn't a type-through continuation
+                // (handled above) — the suggestion was discarded by a diverging/navigation
+                // keystroke. Only record when there was actually something to reject (most
+                // keystrokes have no ghost showing at all, and we don't want to flood the event
+                // log with no-ops).
+                if !ghost.isEmpty {
+                    deps.recordSuggestionEvent(kind: .rejected, ghostText: ghost, metadata: "keystrokeDiverged")
+                }
             }
 
             // Navigation and correction keys (backspace, delete, arrows) — only dismiss
@@ -95,37 +95,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         deps.keyMonitor.onTabPressed = { [weak deps] in
             guard let deps else { return }
 
-            // Per-app "Disable Tab accept" (AppPolicyResolver.tabKeyDisabled): the event tap
-            // already swallowed this Tab (it only consults isOverlayVisible, see KeyEventMonitor
-            // CLAUDE.md notes), so re-inject a literal tab character to preserve the app's own
-            // Tab behavior (e.g. indent in a code editor) instead of accepting the suggestion.
-            if deps.currentPolicy.tabKeyDisabled {
-                deps.keyMonitor.isOverlayVisible = false
-                deps.completionOverlay.hide(animated: false)
+            // OverlayController.acceptOutcome resolves the exhaustive Tab verdict
+            // (OverlayStateMachine.acceptRequested) and already applies the hide-related side
+            // effects for `.passThrough` / `.none` — see its doc comment for why those two both
+            // need different `animated` values reproduced from the original guards. What's left
+            // here is exactly the AX work each remaining case needs, in the same order as before.
+            let outcome = deps.overlayController.acceptOutcome(
+                currentEpoch: deps.focusEpoch.epoch,
+                tabKeyDisabled: deps.currentPolicy.tabKeyDisabled
+            )
+            switch outcome {
+            case .passThrough:
+                // Per-app "Disable Tab accept" (AppPolicyResolver.tabKeyDisabled): the event tap
+                // already swallowed this Tab (it only consults isOverlayVisible, see
+                // KeyEventMonitor CLAUDE.md notes), so re-inject a literal tab character to
+                // preserve the app's own Tab behavior (e.g. indent in a code editor) instead of
+                // accepting the suggestion.
                 deps.accessibilityManager.injectText("\t")
-                return
-            }
 
-            let ghost = deps.completionOverlay.currentText
-            guard !ghost.isEmpty else {
-                deps.keyMonitor.isOverlayVisible = false
-                deps.completionOverlay.hide()
-                return
-            }
+            case .none:
+                // Nothing to do: no ghost was showing, or the acceptance guardrail dropped it
+                // because focus drifted since the ghost was generated (never insert a suggestion
+                // into a field different from the one it was generated for).
+                break
 
-            // Acceptance guardrail: never insert a suggestion into a field different from the one
-            // it was generated for. If focus drifted since the ghost was shown, the epoch moved on
-            // — drop the accept rather than paste into the wrong place.
-            guard deps.focusEpoch.mayAccept(stampedEpoch: deps.suggestionEpoch) else {
-                deps.keyMonitor.isOverlayVisible = false
-                deps.completionOverlay.hide(animated: false)
-                return
-            }
-
-            // Spelling correction: replace the misspelled word with the ghost suggestion.
-            if deps.spellCorrectionLength > 0 {
-                let len = deps.spellCorrectionLength
-                deps.spellCorrectionLength = 0
+            case .replaceSpell(let ghost, let len):
                 let corrected = ghost + " "
                 if let element = deps.accessibilityManager.focusedElement() {
                     deps.accessibilityManager.replaceCurrentWord(corrected, wordLength: len, into: element)
@@ -134,17 +128,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 // Keep buffer in sync so buffer-fallback mode doesn't re-detect the stale misspelling.
                 deps.keyMonitor.keystrokeBuffer.replaceTrailing(count: len, with: corrected)
-                deps.keyMonitor.isOverlayVisible = false
-                deps.completionOverlay.hide()
+                deps.overlayController.hide()
                 deps.recordSuggestionEvent(kind: .accepted, ghostText: corrected, metadata: "spellCorrection")
                 deps.completionPipeline.keystrokeReceived()
-                return
-            }
 
-            // Emoji replacement: swap the `:shortcode` text with the emoji.
-            if deps.emojiReplacementLength > 0 {
-                let len = deps.emojiReplacementLength
-                deps.emojiReplacementLength = 0
+            case .replaceEmoji(let ghost, let len):
                 if let element = deps.accessibilityManager.focusedElement() {
                     deps.accessibilityManager.replaceCurrentWord(ghost, wordLength: len, into: element)
                 } else {
@@ -153,64 +141,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 // Keep buffer in sync so buffer-fallback mode doesn't re-detect the stale :shortcode.
                 deps.keyMonitor.keystrokeBuffer.replaceTrailing(count: len, with: ghost)
-                deps.keyMonitor.isOverlayVisible = false
-                deps.completionOverlay.hide()
+                deps.overlayController.hide()
                 deps.recordSuggestionEvent(kind: .accepted, ghostText: ghost, metadata: "emoji")
                 deps.completionPipeline.keystrokeReceived()
-                return
-            }
 
-            let leading = ghost.hasPrefix(" ") ? " " : ""
-            let body = leading.isEmpty ? ghost : String(ghost.dropFirst())
-            let parts = body.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
-            guard let firstWord = parts.first.map(String.init), !firstWord.isEmpty else {
-                deps.keyMonitor.isOverlayVisible = false
-                deps.completionOverlay.hide()
-                return
-            }
+            case .acceptWord(let ghost):
+                // Two acceptance modes:
+                // • Word-completion (no leading space in ghost): the ghost completes the partial
+                //   word the user is currently typing — REPLACE the partial word instead of
+                //   appending.
+                // • New-word (leading space in ghost): append normally with a word separator.
+                let leading = ghost.hasPrefix(" ") ? " " : ""
+                let body = leading.isEmpty ? ghost : String(ghost.dropFirst())
+                let parts = body.split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+                guard let firstWord = parts.first.map(String.init), !firstWord.isEmpty else {
+                    deps.overlayController.hide()
+                    return
+                }
 
-            // In assistant-prefill / FIM mode the model outputs ONLY the suffix tokens
-            // that come AFTER the cursor position. The partial word the user is typing
-            // (e.g. "Wri") is already in the field; the ghost ("ting") is what follows.
-            // Inserting the ghost after the cursor assembles the full word naturally:
-            //   "Wri" + insert("ting ") = "Writing "  ✓
-            // Replacing the partial would destroy it:
-            //   replace("Wri", wordLen=3) with "ting " = "ting "  ✗
-            // So we ALWAYS insert — never replace — regardless of isMidWordCompletion.
-            let injection = leading + firstWord + " "
-            if let element = deps.accessibilityManager.focusedElement() {
-                deps.accessibilityManager.insertCompletion(injection, into: element)
-            } else {
-                deps.accessibilityManager.injectText(injection)
-            }
+                // In assistant-prefill / FIM mode the model outputs ONLY the suffix tokens
+                // that come AFTER the cursor position. The partial word the user is typing
+                // (e.g. "Wri") is already in the field; the ghost ("ting") is what follows.
+                // Inserting the ghost after the cursor assembles the full word naturally:
+                //   "Wri" + insert("ting ") = "Writing "  ✓
+                // Replacing the partial would destroy it:
+                //   replace("Wri", wordLen=3) with "ting " = "ting "  ✗
+                // So we ALWAYS insert — never replace — regardless of isMidWordCompletion.
+                let injection = leading + firstWord + " "
+                if let element = deps.accessibilityManager.focusedElement() {
+                    deps.accessibilityManager.insertCompletion(injection, into: element)
+                } else {
+                    deps.accessibilityManager.injectText(injection)
+                }
 
-            let accepted = firstWord
-            deps.keyMonitor.keystrokeBuffer.appendAccepted(accepted + " ")
-            let appName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
-            Task { @MainActor in try? deps.historyStore.record(accepted: accepted, appName: appName) }
-            deps.recordSuggestionEvent(kind: .accepted, ghostText: accepted, metadata: "word")
+                let accepted = firstWord
+                deps.keyMonitor.keystrokeBuffer.appendAccepted(accepted + " ")
+                let appName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
+                Task { @MainActor in try? deps.historyStore.record(accepted: accepted, appName: appName) }
+                deps.recordSuggestionEvent(kind: .accepted, ghostText: accepted, metadata: "word")
 
-            // Keep the rest of the suggestion visible for the next Tab.
-            let remaining = parts.count > 1 ? String(parts[1]) : ""
-            if remaining.isEmpty {
-                // Accepted the last word — hide, then immediately request a fresh suggestion
-                // for the new context so the next Tab has something to accept (rather than
-                // passing through as a literal tab).
-                deps.keyMonitor.isOverlayVisible = false
-                deps.completionOverlay.hide()
-                deps.completionPipeline.keystrokeReceived()
-            } else if let rect = deps.accessibilityManager.cursorScreenRect() {
-                deps.completionOverlay.update(text: remaining, near: rect)
-                deps.keyMonitor.isOverlayVisible = true
+                // Keep the rest of the suggestion visible for the next Tab. The epoch to keep
+                // showing it under is the one the just-accepted ghost was generated at — read
+                // back from mode (acceptOutcome left it untouched for the `.acceptWord` case).
+                guard case .mlCompletion(_, let generationEpoch) = deps.overlayController.mode else { return }
+                let remaining = parts.count > 1 ? String(parts[1]) : ""
+                if remaining.isEmpty {
+                    // Accepted the last word — hide, then immediately request a fresh suggestion
+                    // for the new context so the next Tab has something to accept (rather than
+                    // passing through as a literal tab).
+                    deps.overlayController.hide()
+                    deps.completionPipeline.keystrokeReceived()
+                } else {
+                    deps.overlayController.continueShowingML(
+                        ghost: remaining,
+                        epoch: generationEpoch,
+                        cursorRect: deps.accessibilityManager.cursorScreenRect()
+                    )
+                }
             }
         }
 
         deps.keyMonitor.onDismiss = { [weak deps] in
             guard let deps else { return }
-            let ghost = deps.completionOverlay.currentText
-            deps.keyMonitor.isOverlayVisible = false
+            let ghost = deps.overlayController.mode.ghost
             deps.inferenceEngine.cancelCurrent()
-            deps.completionOverlay.hide(animated: true)  // gentle fade on Escape
+            deps.overlayController.hide(animated: true)  // gentle fade on Escape
             if !ghost.isEmpty {
                 deps.recordSuggestionEvent(kind: .dismissed, ghostText: ghost, metadata: "escape")
             }
