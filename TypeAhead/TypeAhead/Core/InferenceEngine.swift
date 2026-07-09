@@ -123,7 +123,7 @@ final class InferenceEngine {
 
         currentTask?.cancel()
 
-        let instruction = PersonalizationEngine.buildInstruction(personaNote: personaNote)
+        let instruction = PersonalizationEngine.buildInstruction(personaNote: personaNote, suffix: suffix)
 
         // ASSISTANT-PREFILL (assembled in HFBridge): the model turn is seeded with `prompt`
         // and left open, so the instruct model continues the user's own text in-distribution.

@@ -45,11 +45,35 @@ final class PersonalizationEngine {
         + "naturally, matching their wording and style. Do not repeat what they already wrote, "
         + "and do not add quotes, labels, or explanations."
 
-    /// Builds the full system instruction: optional persona prefix + base instruction.
-    /// `nonisolated` — pure computation, no actor state.
-    nonisolated static func buildInstruction(personaNote: String?) -> String {
-        guard let note = personaNote, !note.isEmpty else { return baseInstruction }
-        return "\(note)\n\n\(baseInstruction)"
+    /// Defensive re-cap for the suffix hint appended to the instruction. `ContextBuilder.buildSuffix`
+    /// already caps at this many chars, but the instruction builder shouldn't trust that from a
+    /// distance — re-cap here so a future caller can't blow up the prompt.
+    nonisolated private static let maxSuffixHintChars = 120
+
+    /// Builds the full system instruction: optional persona prefix + base instruction +
+    /// optional suffix hint. `nonisolated` — pure computation, no actor state.
+    ///
+    /// - Parameter suffix: text already after the cursor (from `ContextBuilder.buildSuffix`).
+    ///   When non-empty, appended as an instruction-level hint so the model knows what follows
+    ///   the cursor and avoids duplicating/contradicting it — WITHOUT touching the assistant-prefill
+    ///   seed itself (that must stay exactly the user's prefix; see InferenceEngine/HFBridge).
+    ///   Empty suffix (the common "cursor at end of text" case) leaves the instruction
+    ///   byte-identical to the no-suffix behavior.
+    nonisolated static func buildInstruction(personaNote: String?, suffix: String = "") -> String {
+        let base: String
+        if let note = personaNote, !note.isEmpty {
+            base = "\(note)\n\n\(baseInstruction)"
+        } else {
+            base = baseInstruction
+        }
+
+        let cappedSuffix = String(suffix.prefix(maxSuffixHintChars))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cappedSuffix.isEmpty else { return base }
+
+        return base
+            + "\n\nThe text after the cursor continues: \"\(cappedSuffix)\" — your completion "
+            + "must lead into it naturally and must not repeat it."
     }
 
     /// Builds the personalized system instruction to inject into InferenceEngine.
