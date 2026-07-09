@@ -1,14 +1,22 @@
 import AppKit
+import os
 
 @MainActor
 final class AppDependencies {
     static let shared = AppDependencies()
+
+    private let logger = Logger(subsystem: "app.typeahead", category: "AppDependencies")
 
     let settings = AppSettings()
     let accessibilityManager = AccessibilityManager()
     let inferenceEngine = InferenceEngine()
     let completionOverlay = CompletionOverlay()
     let historyStore = HistoryStore()
+    let eventStore = SuggestionEventStore()
+    /// Last-50 full-detail ring buffer for the Diagnostics settings pane. In-memory only —
+    /// never persisted (privacy: full prompt/ghost text must never touch disk). See
+    /// `SuggestionEventStore` for the persisted, lengths-only counterpart.
+    let debugBuffer = SuggestionDebugBuffer()
     lazy var modelManager = ModelManager(inferenceEngine: inferenceEngine, settings: settings)
     lazy var personalizationEngine = PersonalizationEngine(historyStore: historyStore)
     lazy var completionPipeline: CompletionPipeline = CompletionPipeline(
@@ -66,6 +74,47 @@ final class AppDependencies {
         focusEpoch.focusChanged()
     }
 
+    /// Records a suggestion-lifecycle event to both the persisted `eventStore` (lengths only)
+    /// and the in-memory `debugBuffer` (full detail, for Diagnostics). Fire-and-forget: the
+    /// SwiftData write happens in a detached Task so it never blocks the caller's hot path
+    /// (keystroke handling / Tab acceptance). Reads the frontmost app fresh at call time —
+    /// call sites are all synchronous UI-thread reactions to the ghost that was just shown/
+    /// acted on, so frontmost app hasn't had a chance to change out from under them.
+    func recordSuggestionEvent(
+        kind: SuggestionEventKind,
+        promptTail: String = "",
+        ghostText: String,
+        latencyMs: Double = 0,
+        metadata: String = ""
+    ) {
+        let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
+        let appName = settings.appRegistry[bundleID]?.displayName
+            ?? NSWorkspace.shared.frontmostApplication?.localizedName
+            ?? bundleID
+
+        debugBuffer.record(SuggestionDebugEntry(
+            kind: kind,
+            appName: appName,
+            promptTail: promptTail,
+            ghostText: ghostText,
+            latencyMs: latencyMs,
+            metadata: metadata
+        ))
+
+        let event = SuggestionEvent(
+            kind: kind,
+            appName: appName,
+            bundleID: bundleID,
+            modelID: settings.activeModelID,
+            latencyMs: latencyMs,
+            promptTailLength: promptTail.count,
+            ghostTextLength: ghostText.count,
+            metadata: metadata
+        )
+        let store = eventStore
+        Task { @MainActor in try? store.record(event) }
+    }
+
     private var screenContextCache: (text: String, at: Date, bundleID: String)?
     private let screenContextCacheTTL: TimeInterval = 2.0
 
@@ -80,6 +129,13 @@ final class AppDependencies {
     var emojiReplacementLength: Int = 0
 
     private func runCompletion() async {
+        // Latency measurement (WS2): stamped here, at the moment the debounced pipeline fires
+        // and runCompletion actually starts running — NOT at the original keystroke. The
+        // debounce/max-wait interval is a deliberate, configurable wait (settings.completionDelay),
+        // not processing latency; measuring from here to first ghost paint isolates the part
+        // that's actually a perf signal (context read + fast-path lookup or inference time).
+        let generationStart = Date()
+
         // Resolve the effective per-app policy first — before any context reads or inference —
         // so excluded/disabled apps pay zero cost. Auto-register the app (first sighting) so it
         // shows up in the Apps settings pane, then combine the legacy exclusion list with any
@@ -153,9 +209,16 @@ final class AppDependencies {
             let fontSize = accessibilityManager.focusedFontSize()
             spellCorrectionLength = fix.misspelledLength
             inferenceEngine.cancelCurrent()
-            print("📝 spell '\(fix.original)' → '\(fix.suggestion)'")
+            logger.debug("spell correction: '\(fix.original, privacy: .private)' -> '\(fix.suggestion, privacy: .private)'")
             completionOverlay.show(text: fix.suggestion, near: cursorRect, fontSize: fontSize)
             keyMonitor.isOverlayVisible = true
+            recordSuggestionEvent(
+                kind: .shown,
+                promptTail: String(context.textBeforeCursor.suffix(40)),
+                ghostText: fix.suggestion,
+                latencyMs: Date().timeIntervalSince(generationStart) * 1000,
+                metadata: "spellCorrection"
+            )
             return
         }
 
@@ -171,9 +234,16 @@ final class AppDependencies {
             let fontSize = accessibilityManager.focusedFontSize()
             emojiReplacementLength = 1 + shortcode.count  // ":" + shortcode
             inferenceEngine.cancelCurrent()
-            print("😀 emoji '\(emoji)' for :\(shortcode) at \(cursorRect.origin)")
+            logger.debug("emoji suggestion for shortcode '\(shortcode, privacy: .private)' at \(cursorRect.origin.debugDescription, privacy: .public)")
             completionOverlay.show(text: emoji, near: cursorRect, fontSize: fontSize)
             keyMonitor.isOverlayVisible = true
+            recordSuggestionEvent(
+                kind: .shown,
+                promptTail: String(context.textBeforeCursor.suffix(40)),
+                ghostText: emoji,
+                latencyMs: Date().timeIntervalSince(generationStart) * 1000,
+                metadata: "emoji"
+            )
             return
         }
 
@@ -260,7 +330,8 @@ final class AppDependencies {
         // The onUpdate hop below runs on a *later* main-actor turn, so a focus change can land in
         // between — guard the paint on the epoch so a stale ghost can't flash in the new field.
         let generationEpoch = suggestionEpoch
-        print("⌨️ [\(source)] prompt='\(prompt.suffix(60))' suffix='\(suffix.prefix(40))' persona=\(personaNote != nil) cursor=\(cursorRect)")
+        logger.debug("completion request: source=\(source, privacy: .public) prompt='\(prompt.suffix(60), privacy: .private)' suffix='\(suffix.prefix(40), privacy: .private)' persona=\(personaNote != nil, privacy: .public) cursor=\(cursorRect.debugDescription, privacy: .public)")
+        let promptTail = String(context.textBeforeCursor.suffix(40))
 
         inferenceEngine.complete(
             prompt: prompt,
@@ -279,9 +350,19 @@ final class AppDependencies {
                 if keyMonitor.isOverlayVisible, !completionOverlay.currentText.isEmpty {
                     completionOverlay.update(text: full, near: cursorRect)
                 } else {
-                    print("👻 overlay.show '\(full.prefix(40))' at \(cursorRect.origin)")
+                    logger.debug("overlay.show '\(full.prefix(40), privacy: .private)' at \(cursorRect.origin.debugDescription, privacy: .public)")
                     completionOverlay.show(text: full, near: cursorRect, fontSize: fontSize)
                     keyMonitor.isOverlayVisible = true
+                    // Only the FIRST paint of a generation cycle counts as "shown" — the
+                    // isOverlayVisible branch above handles every subsequent streamed token
+                    // update via .update(), which intentionally does not re-record.
+                    recordSuggestionEvent(
+                        kind: .shown,
+                        promptTail: promptTail,
+                        ghostText: full,
+                        latencyMs: Date().timeIntervalSince(generationStart) * 1000,
+                        metadata: "ml"
+                    )
                 }
             }
         } onComplete: {}

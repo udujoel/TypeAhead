@@ -1,8 +1,10 @@
 import AppKit
 import Carbon
+import os
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBarMenu: StatusBarMenu?
+    private let logger = Logger(subsystem: "app.typeahead", category: "AppDelegate")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Unbuffered stdout so print() logs appear immediately when launched via `open`
@@ -30,14 +32,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                let typed = event.characters, typed.count == 1, ghost.hasPrefix(typed) {
                 let remaining = String(ghost.dropFirst())
                 if remaining.isEmpty {
+                    // The user typed out the entire ghost character-by-character — it
+                    // disappears because there's nothing left to show, not because it was
+                    // explicitly accepted (Tab) or rejected (diverging keystroke/Escape).
                     deps.keyMonitor.isOverlayVisible = false
                     deps.completionOverlay.hide(animated: false)
+                    deps.recordSuggestionEvent(kind: .typedThrough, ghostText: ghost, metadata: "typedThrough")
                 } else if let rect = deps.accessibilityManager.cursorScreenRect() {
                     deps.completionOverlay.update(text: remaining, near: rect)
                 } else {
-                    // Cursor position unavailable — hide rather than leaving overlay at stale position.
+                    // Cursor position unavailable — hide rather than leaving overlay at stale
+                    // position. The suggestion is lost mid-type-through through no fault of the
+                    // user's typing, closer to a rejection than a completed type-through.
                     deps.keyMonitor.isOverlayVisible = false
                     deps.completionOverlay.hide(animated: false)
+                    deps.recordSuggestionEvent(kind: .rejected, ghostText: ghost, metadata: "cursorUnavailable")
                 }
                 return  // typed along with the suggestion — keep it, no regeneration
             }
@@ -45,6 +54,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             deps.keyMonitor.isOverlayVisible = false
             deps.inferenceEngine.cancelCurrent()
             deps.completionOverlay.hide(animated: false)
+            // A ghost was visible and this keystroke wasn't a type-through continuation (handled
+            // above) — the suggestion was discarded by a diverging/navigation keystroke. Only
+            // record when there was actually something to reject (most keystrokes have no ghost
+            // showing at all, and we don't want to flood the event log with no-ops).
+            if !ghost.isEmpty {
+                deps.recordSuggestionEvent(kind: .rejected, ghostText: ghost, metadata: "keystrokeDiverged")
+            }
 
             // Navigation and correction keys (backspace, delete, arrows) — only dismiss
             // the overlay; do NOT queue a new suggestion. While the user is correcting text
@@ -120,6 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 deps.keyMonitor.keystrokeBuffer.replaceTrailing(count: len, with: corrected)
                 deps.keyMonitor.isOverlayVisible = false
                 deps.completionOverlay.hide()
+                deps.recordSuggestionEvent(kind: .accepted, ghostText: corrected, metadata: "spellCorrection")
                 deps.completionPipeline.keystrokeReceived()
                 return
             }
@@ -138,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 deps.keyMonitor.keystrokeBuffer.replaceTrailing(count: len, with: ghost)
                 deps.keyMonitor.isOverlayVisible = false
                 deps.completionOverlay.hide()
+                deps.recordSuggestionEvent(kind: .accepted, ghostText: ghost, metadata: "emoji")
                 deps.completionPipeline.keystrokeReceived()
                 return
             }
@@ -170,6 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             deps.keyMonitor.keystrokeBuffer.appendAccepted(accepted + " ")
             let appName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
             Task { @MainActor in try? deps.historyStore.record(accepted: accepted, appName: appName) }
+            deps.recordSuggestionEvent(kind: .accepted, ghostText: accepted, metadata: "word")
 
             // Keep the rest of the suggestion visible for the next Tab.
             let remaining = parts.count > 1 ? String(parts[1]) : ""
@@ -187,9 +206,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         deps.keyMonitor.onDismiss = { [weak deps] in
-            deps?.keyMonitor.isOverlayVisible = false
-            deps?.inferenceEngine.cancelCurrent()
-            deps?.completionOverlay.hide(animated: true)  // gentle fade on Escape
+            guard let deps else { return }
+            let ghost = deps.completionOverlay.currentText
+            deps.keyMonitor.isOverlayVisible = false
+            deps.inferenceEngine.cancelCurrent()
+            deps.completionOverlay.hide(animated: true)  // gentle fade on Escape
+            if !ghost.isEmpty {
+                deps.recordSuggestionEvent(kind: .dismissed, ghostText: ghost, metadata: "escape")
+            }
         }
 
         // Global ⌃⌥⌘T opens the status menu at the mouse — the always-works entry point when the
@@ -203,13 +227,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // One-time checks. If trusted is false → re-grant in System Settings. If a debugger
         // is attached, cross-process AX reads are DENIED (error -25204) regardless of trust,
         // so ghost text can't find the caret — the app must be launched standalone, not Cmd+R.
-        print("🔐 Accessibility trusted: \(deps.accessibilityManager.isProcessTrusted)")
-        print("🔬 Debugger attached: \(deps.accessibilityManager.isBeingDebugged) (if true, AX reads will fail — launch the app from Finder, not Xcode Run)")
+        logger.info("Accessibility trusted: \(deps.accessibilityManager.isProcessTrusted, privacy: .public)")
+        logger.info("Debugger attached: \(deps.accessibilityManager.isBeingDebugged, privacy: .public) (if true, AX reads will fail — launch the app from Finder, not Xcode Run)")
         // If untrusted, show the system prompt and add the app to the Accessibility list
         // so the user can grant it with one toggle.
         if !deps.accessibilityManager.isProcessTrusted {
             deps.accessibilityManager.promptForTrustIfNeeded()
-            print("ℹ️ Not trusted — prompted. Enable TypeAhead in System Settings → Privacy & Security → Accessibility, then relaunch.")
+            logger.info("Not trusted — prompted. Enable TypeAhead in System Settings > Privacy & Security > Accessibility, then relaunch.")
         }
 
         // Load (and download if needed) the user's chosen model on startup.
