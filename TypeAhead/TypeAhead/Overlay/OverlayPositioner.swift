@@ -40,17 +40,27 @@ enum OverlayPositioner {
         return NSPoint(x: clampedX, y: clampedY)
     }
 
-    /// Origin for a bar anchored to the focused text element's own frame — just ABOVE the
-    /// compose box, left-aligned with a small inset, so the ghost is clearly associated with
-    /// the input without covering the text being typed. Used for Electron apps whose caret
-    /// bounds lie but whose element frame is still valid (e.g. Claude desktop); one rung more
-    /// precise than the window-corner `pinnedOrigin`.
-    static func elementAnchoredOrigin(elementFrame: NSRect, panelSize: NSSize) -> NSPoint {
+    /// Origin for the Cotypist-style MIRROR bar anchored to the focused text element's own frame
+    /// — just BELOW the compose box (the "second line" look), left-aligned with a small inset.
+    /// Since the mirror carries its own copy of the typed text, it doesn't need to sit at the
+    /// caret; it just needs to read as a natural continuation of the input. Flips to just ABOVE
+    /// the field when placing it below would push it past the screen's visible bottom edge
+    /// (e.g. a compose box docked at the bottom of the window). Used for the `elementFrame`
+    /// placement tier (Electron apps whose caret bounds lie but whose element frame is valid,
+    /// e.g. Claude desktop) — one rung more precise than the window-corner `pinnedOrigin`.
+    ///
+    /// The "below the screen bottom" check uses the screen's `visibleFrame.minY` when a screen
+    /// can be resolved for `elementFrame`, and falls back to `0` (the common case) when it can't
+    /// — e.g. in the headless test environment, which may report no `NSScreen`s at all. That
+    /// keeps the flip decision itself deterministic and testable without a real display.
+    static func mirrorOrigin(elementFrame: NSRect, panelSize: NSSize) -> NSPoint {
         let x = elementFrame.minX + 8
-        let y = elementFrame.maxY + 4
+        let belowY = elementFrame.minY - panelSize.height - 2
         let screen = NSScreen.screens.first {
             NSPointInRect(elementFrame.origin, $0.frame)
         } ?? NSScreen.main
+        let visibleMinY = screen?.visibleFrame.minY ?? 0
+        let y = belowY >= visibleMinY ? belowY : elementFrame.maxY + 4
         guard let screen else { return NSPoint(x: x, y: y) }
         return clampedOrigin(x: x, y: y, panelSize: panelSize, visibleFrame: screen.visibleFrame)
     }

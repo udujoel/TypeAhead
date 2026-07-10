@@ -61,7 +61,7 @@ enum CompletionCoordinator {
     /// cycle. A `.suppress` placement means the ghost can never paint (`OverlayController` would
     /// no-op every streamed token), so starting an MLX generation would burn battery/latency for
     /// nothing — `runCompletion` early-returns instead, BEFORE building the prompt or calling
-    /// `inferenceEngine.complete`. `.inline` and `.pinnedBar` both proceed. The spell/emoji fast
+    /// `inferenceEngine.complete`. `.inline` and `.mirror` both proceed. The spell/emoji fast
     /// paths don't consult this: they have no inference cost, and their suppress handling (no-op
     /// show + `placementSuppressed` telemetry inside `OverlayController`) already short-circuits.
     static func shouldRunInference(presentation: PlacementPresentation) -> Bool {

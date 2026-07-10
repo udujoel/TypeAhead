@@ -279,14 +279,16 @@ final class AccessibilityManager {
             logger.debug("caret unreliable[\(bundleID, privacy: .public)] AX=\(self.rectStr(axRect), privacy: .public) (no vision; window=\(windowFrame.map(self.rectStr) ?? "nil", privacy: .public))")
             return CaretPlacement(rect: axRect, tier: .exactAX)
         }
-        // Element-frame rung: caret bounds lie but the compose box's own frame is valid —
-        // anchor the ghost just above the input field. Far better association than the
-        // window-corner pinned bar (the "ghost in the bottom corner" complaint in Claude
-        // desktop when Vision is unavailable).
+        // Element-frame rung: caret bounds lie but the compose box's own frame is valid — the
+        // mirror anchors just below (or above, if that'd run off-screen) the input field. Far
+        // better association than the window-corner pinned bar (the "ghost in the bottom
+        // corner" complaint in Claude desktop when Vision is unavailable). Unlike the other
+        // rungs, this returns the RAW element frame rather than a pre-computed origin — the
+        // mirror's on-screen position (below-vs-above flip, clamping) is pure positioning math
+        // that belongs in `OverlayPositioner.mirrorOrigin` (tested), not here.
         if let elementFrame = focusedElementScreenFrame() {
-            let anchored = OverlayPositioner.elementAnchoredOrigin(elementFrame: elementFrame, panelSize: NSSize(width: 1, height: 20))
-            logger.debug("caret unreliable[\(bundleID, privacy: .public)] ELEMENT=\(self.rectStr(elementFrame), privacy: .public) -> (\(Int(anchored.x), privacy: .public),\(Int(anchored.y), privacy: .public)) (no vision, no AX caret)")
-            return CaretPlacement(rect: NSRect(origin: anchored, size: NSSize(width: 0, height: 20)), tier: .elementFrame)
+            logger.debug("caret unreliable[\(bundleID, privacy: .public)] ELEMENT=\(self.rectStr(elementFrame), privacy: .public) (no vision, no AX caret)")
+            return CaretPlacement(rect: elementFrame, tier: .elementFrame)
         }
         if let windowFrame {
             let pinned = OverlayPositioner.pinnedOrigin(windowFrame: windowFrame, panelSize: NSSize(width: 1, height: 20))
@@ -300,9 +302,9 @@ final class AccessibilityManager {
 
     /// `cursorScreenRect()` narrowed to the type-through reposition path (`AppDelegate`'s
     /// `onKeystroke` handler and the post-Tab-accept `continueShowingML` call): those callers
-    /// only ever want a rect to reposition an ALREADY-showing inline ghost, never a pinned-bar or
+    /// only ever want a rect to reposition an ALREADY-showing inline ghost, never a mirror or
     /// suppressed placement — repositioning into either of those would silently teleport the
-    /// ghost away from the caret mid-type. Returns `nil` for `.pinnedBar`/`.suppress` tiers so the
+    /// ghost away from the caret mid-type. Returns `nil` for `.mirror`/`.suppress` tiers so the
     /// caller takes its existing "cursor unavailable" branch (hide + `cursorUnavailable`
     /// telemetry), exactly as it already does when the ladder returns nil outright.
     func inlineCursorRect() -> NSRect? {

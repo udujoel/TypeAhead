@@ -31,9 +31,12 @@ enum PlacementTier: String, Equatable, Sendable {
 enum PlacementPresentation: Equatable, Sendable {
     /// Paint the ghost inline at the returned rect — current caret-anchored behavior.
     case inline
-    /// Paint the ghost at the returned rect using the existing pinned-bar look, but never claim
-    /// it's sitting at the caret.
-    case pinnedBar
+    /// Paint the ghost as a Cotypist-style MIRROR: a two-tone bar that re-renders the tail of the
+    /// typed text (normal color) followed by the ghost (grey), reading as one continuous line.
+    /// Alignment to the real caret doesn't matter here — the mirror carries its own copy of the
+    /// text — so this covers both the `elementFrame` and `approximate` tiers. Replaces the old
+    /// bare `.pinnedBar` look; nothing uses that anymore.
+    case mirror
     /// Don't show the ghost at all — the placement guess is untrustworthy enough that painting it
     /// anywhere would read as "buggy app."
     case suppress
@@ -48,8 +51,8 @@ enum PlacementPolicy {
             return .inline
         case .elementFrame, .approximate:
             // Both are honest approximations (anchored to the input field / window input area) —
-            // shown in the pinned-bar style, never claiming caret precision.
-            return .pinnedBar
+            // shown as a mirror, never claiming caret precision.
+            return .mirror
         case .unknown:
             return .suppress
         }
