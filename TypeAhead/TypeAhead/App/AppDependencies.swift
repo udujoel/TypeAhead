@@ -234,7 +234,9 @@ final class AppDependencies {
                     epoch: cycleEpoch,
                     cursorRect: placement.rect,
                     fontSize: fontSize,
-                    presentation: placement.presentation
+                    presentation: placement.presentation,
+                    tier: placement.tier,
+                    textBeforeCursor: context.textBeforeCursor
                 )
                 guard placement.presentation != .suppress else { return }
                 recordSuggestionEvent(
@@ -262,7 +264,9 @@ final class AppDependencies {
                     epoch: cycleEpoch,
                     cursorRect: placement.rect,
                     fontSize: fontSize,
-                    presentation: placement.presentation
+                    presentation: placement.presentation,
+                    tier: placement.tier,
+                    textBeforeCursor: context.textBeforeCursor
                 )
                 guard placement.presentation != .suppress else { return }
                 recordSuggestionEvent(
@@ -389,6 +393,12 @@ final class AppDependencies {
         let generationEpoch = cycleEpoch
         logger.debug("completion request: source=\(source, privacy: .public) prompt='\(prompt.suffix(60), privacy: .private)' suffix='\(suffix.prefix(40), privacy: .private)' persona=\(personaNote != nil, privacy: .public) cursor=\(cursorRect.debugDescription, privacy: .public)")
         let promptTail = String(context.textBeforeCursor.suffix(40))
+        // Captured separately from `context` (rather than reaching into it from inside the
+        // streaming closure below) so the mirror's `MirrorText.compose` always gets the FULL
+        // pre-cursor text, not `promptTail`'s already-40-char-clipped tail — a clip that isn't
+        // "last line"-aware and could otherwise cut a mirror's typed tail mid-word or across a
+        // newline it shouldn't see.
+        let mirrorTypedText = context.textBeforeCursor
 
         inferenceEngine.complete(
             prompt: prompt,
@@ -409,7 +419,9 @@ final class AppDependencies {
                     epoch: generationEpoch,
                     cursorRect: cursorRect,
                     fontSize: fontSize,
-                    presentation: placement.presentation
+                    presentation: placement.presentation,
+                    tier: placement.tier,
+                    textBeforeCursor: mirrorTypedText
                 )
                 // Only the FIRST paint of a generation cycle counts as "shown" — every subsequent
                 // streamed token update goes through the update-in-place branch inside
