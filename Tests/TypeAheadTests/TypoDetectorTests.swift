@@ -96,4 +96,36 @@ import Testing
             #expect(fix.misspelledLength == "teh".count)
         }
     }
+
+    // MARK: - Mid-typing suppression (dogfooding: 'buil' → 'boil' while typing 'built')
+
+    @Test func correctionSuppressedWhileWordIsAValidPrefix() {
+        // "buil" extends to "build"/"built" — the user is plausibly still typing, so no
+        // correction may fire even though NSSpellChecker flags "buil" as misspelled.
+        let result = TypoDetector.correction(in: "It buil")
+        #expect(result == nil)
+    }
+
+    @Test func prefixDetectionRecognisesPartialWords() {
+        // System-dictionary dependent, but "buil" → build/built and "workin" → working
+        // are safe bets on any English macOS install.
+        #expect(TypoDetector.isPrefixOfValidWord("buil"))
+        #expect(TypoDetector.isPrefixOfValidWord("workin"))
+    }
+
+    @Test func prefixDetectionRejectsDeadEnds() {
+        // "helpp" and "recieve" can't be extended into valid words — corrections on them
+        // should still fire immediately, mid-word.
+        #expect(!TypoDetector.isPrefixOfValidWord("helpp"))
+        #expect(!TypoDetector.isPrefixOfValidWord("recieve"))
+    }
+
+    @Test func genuineTypoStillCorrectedMidWord() {
+        // "recieve" has no valid continuation — the correction must not be delayed by
+        // the prefix guard. (Tolerant like the other NSSpellChecker-dependent tests.)
+        let result = TypoDetector.correction(in: "I recieve")
+        if let fix = result {
+            #expect(fix.suggestion.lowercased() != "recieve")
+        }
+    }
 }

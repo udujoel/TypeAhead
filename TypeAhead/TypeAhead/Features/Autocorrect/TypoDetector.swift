@@ -30,6 +30,10 @@ enum TypoDetector {
     /// - The cursor is mid-word (text does not end in whitespace).
     /// - The last token is ≥ 3 purely alphabetic characters (no digits, punctuation,
     ///   or `:` prefix — those are handled by the emoji path or are likely code/URLs).
+    /// - The token is NOT a prefix of a valid dictionary word — the user may simply
+    ///   still be typing it. Dogfooding: "buil" (heading for "built") was "corrected"
+    ///   to "boil" mid-word. A genuine typo like "recieve" or "helpp" has no valid
+    ///   continuation, so it still fires immediately.
     /// - NSSpellChecker considers it misspelled and offers a suggestion different from
     ///   the typed word.
     static func correction(in textBeforeCursor: String) -> TypoFix? {
@@ -38,9 +42,28 @@ enum TypoDetector {
         guard word.count >= 3,
               word.first != ":",
               word.allSatisfy({ $0.isLetter || $0 == "'" }) else { return nil }
+        guard !isPrefixOfValidWord(word) else { return nil }
         guard let fix = check(word: word),
               fix.suggestion.lowercased() != word.lowercased() else { return nil }
         return fix
+    }
+
+    /// True when `word` is a strict prefix of at least one valid dictionary word — i.e. the
+    /// user is plausibly mid-typing it ("buil" → "build"/"built") and correcting now would
+    /// mangle a word they haven't finished. Uses NSSpellChecker's partial-word completions,
+    /// filtered to genuine prefix extensions (the API also returns fuzzy suggestions).
+    static func isPrefixOfValidWord(_ word: String) -> Bool {
+        guard let completions = checker.completions(
+            forPartialWordRange: NSRange(location: 0, length: (word as NSString).length),
+            in: word,
+            language: checker.language(),
+            inSpellDocumentWithTag: 0
+        ) else { return false }
+        let lower = word.lowercased()
+        return completions.contains { candidate in
+            let candidateLower = candidate.lowercased()
+            return candidateLower.hasPrefix(lower) && candidateLower != lower
+        }
     }
 
     /// Extracts the last contiguous non-whitespace token from the end of `text`.
