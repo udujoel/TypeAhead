@@ -242,6 +242,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ?? ModelConfig.recommended(availableRAMGB: Self.availableRAMGB())
             await deps.modelManager.downloadAndActivate(config: config)
         }
+
+        // Always open the Settings window on launch. The menu-bar status item can be hidden
+        // by the notch / menu-bar overflow on crowded setups (its window attaches fine but
+        // macOS gives it no visible slot), leaving no discoverable way into the app — the
+        // window guarantees reachability. The user closes it like any normal window; the
+        // app keeps running as a menu-bar accessory.
+        SettingsWindowController.shared.open()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
