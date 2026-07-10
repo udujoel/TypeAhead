@@ -279,9 +279,18 @@ final class AccessibilityManager {
             logger.debug("caret unreliable[\(bundleID, privacy: .public)] AX=\(self.rectStr(axRect), privacy: .public) (no vision; window=\(windowFrame.map(self.rectStr) ?? "nil", privacy: .public))")
             return CaretPlacement(rect: axRect, tier: .exactAX)
         }
+        // Element-frame rung: caret bounds lie but the compose box's own frame is valid —
+        // anchor the ghost just above the input field. Far better association than the
+        // window-corner pinned bar (the "ghost in the bottom corner" complaint in Claude
+        // desktop when Vision is unavailable).
+        if let elementFrame = focusedElementScreenFrame() {
+            let anchored = OverlayPositioner.elementAnchoredOrigin(elementFrame: elementFrame, panelSize: NSSize(width: 1, height: 20))
+            logger.debug("caret unreliable[\(bundleID, privacy: .public)] ELEMENT=\(self.rectStr(elementFrame), privacy: .public) -> (\(Int(anchored.x), privacy: .public),\(Int(anchored.y), privacy: .public)) (no vision, no AX caret)")
+            return CaretPlacement(rect: NSRect(origin: anchored, size: NSSize(width: 0, height: 20)), tier: .elementFrame)
+        }
         if let windowFrame {
             let pinned = OverlayPositioner.pinnedOrigin(windowFrame: windowFrame, panelSize: NSSize(width: 1, height: 20))
-            logger.debug("caret unreliable[\(bundleID, privacy: .public)] PINNED=(\(Int(pinned.x), privacy: .public),\(Int(pinned.y), privacy: .public)) window=\(self.rectStr(windowFrame), privacy: .public) (no vision, no AX)")
+            logger.debug("caret unreliable[\(bundleID, privacy: .public)] PINNED=(\(Int(pinned.x), privacy: .public),\(Int(pinned.y), privacy: .public)) window=\(self.rectStr(windowFrame), privacy: .public) (no vision, no AX, no element frame)")
             return CaretPlacement(rect: NSRect(origin: pinned, size: NSSize(width: 0, height: 20)), tier: .approximate)
         }
         let mouse = NSEvent.mouseLocation
@@ -424,6 +433,34 @@ final class AccessibilityManager {
         let menuBarHeight = NSScreen.screens.first?.frame.maxY ?? NSScreen.main?.frame.maxY ?? 0
         let flippedY = menuBarHeight - (origin.y + size.height)
         return NSRect(x: origin.x, y: flippedY, width: size.width, height: size.height)
+    }
+
+    /// The focused text element's own frame (the compose box rect) in Cocoa screen coordinates,
+    /// or nil if AX can't supply a sane one. Electron apps whose caret bounds lie (Claude
+    /// desktop, Slack) usually still report a valid element frame — reading it lets the ghost
+    /// anchor to the input field instead of falling to the window-corner pinned bar. Same
+    /// kAXPosition/kAXSize read + Quartz→Cocoa flip as `focusedWindowScreenFrame()` above,
+    /// plus an on-screen sanity check because Electron may still lie about the frame too.
+    private func focusedElementScreenFrame() -> NSRect? {
+        guard let element = focusedTextElement() else { return nil }
+
+        var posRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &posRef) == .success,
+              AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeRef) == .success,
+              let posRef, let sizeRef else { return nil }
+
+        var origin = CGPoint.zero
+        var size = CGSize.zero
+        AXValueGetValue(posRef as! AXValue, .cgPoint, &origin)
+        AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+        guard size.width > 0, size.height > 0, origin.x.isFinite, origin.y.isFinite else { return nil }
+
+        let menuBarHeight = NSScreen.screens.first?.frame.maxY ?? NSScreen.main?.frame.maxY ?? 0
+        let flippedY = menuBarHeight - (origin.y + size.height)
+        let frame = NSRect(x: origin.x, y: flippedY, width: size.width, height: size.height)
+        guard OverlayPositioner.isOnScreen(frame, screenFrames: NSScreen.screens.map(\.frame)) else { return nil }
+        return frame
     }
 
     private func focusedWindowTitle() -> String? {

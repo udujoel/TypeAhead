@@ -15,6 +15,11 @@ enum PlacementTier: String, Equatable, Sendable {
     /// A Vision OCR anchor whose TTL expired but is still from the current window — pixel-accurate
     /// from a real scan, just possibly stale if the text has since scrolled/changed.
     case visionStale
+    /// The focused text element's own AX frame (compose box rect) — no caret-level signal, but
+    /// the ghost can be anchored to the input field itself. Electron apps whose caret bounds lie
+    /// (Claude desktop, Slack) usually still report a valid element frame, so this beats the
+    /// window-corner pinned bar whenever it's available.
+    case elementFrame
     /// The window-corner pinned bar — no caret-level signal at all, just "somewhere in this
     /// window's input area."
     case approximate
@@ -41,7 +46,9 @@ enum PlacementPolicy {
         switch tier {
         case .exactAX, .visionFresh, .visionStale:
             return .inline
-        case .approximate:
+        case .elementFrame, .approximate:
+            // Both are honest approximations (anchored to the input field / window input area) —
+            // shown in the pinned-bar style, never claiming caret precision.
             return .pinnedBar
         case .unknown:
             return .suppress
