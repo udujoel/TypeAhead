@@ -263,6 +263,21 @@ enum GhostText {
             .joined(separator: " ")
     }
 
+    /// True when the ghost is mostly one token repeated — the degenerate echo-loop a small
+    /// model falls into on ambiguous single-letter prefixes (dogfooding: typing
+    /// "...for all the l" generated " l l l l l"). Rule: ≥ 3 whitespace-separated tokens and
+    /// the most frequent token (case-insensitive) accounts for ≥ 75% of them. Applies to any
+    /// token length — "the the the the" is as useless as "l l l l" — while the ≥ 3 floor keeps
+    /// legitimate doubles ("had had", "so so good") out of reach.
+    static func isDegenerateRepetition(_ ghost: String) -> Bool {
+        let tokens = ghost.split(whereSeparator: \.isWhitespace).map { $0.lowercased() }
+        guard tokens.count >= 3 else { return false }
+        var counts: [String: Int] = [:]
+        for token in tokens { counts[token, default: 0] += 1 }
+        guard let dominant = counts.values.max() else { return false }
+        return Double(dominant) / Double(tokens.count) >= 0.75
+    }
+
     /// Returns false for ghost text that is clearly junk — would confuse rather than help.
     ///
     /// Rejects:
@@ -271,12 +286,15 @@ enum GhostText {
     ///   valid hyphens in compound words like "well-defined" are allowed via the word check)
     /// - Any string with no letters or digits UNLESS it's a standalone terminal punctuation
     ///   character (?, !, ), ], }) — those are useful punctuation suggestions.
+    /// - Echo-looped repetition (see `isDegenerateRepetition`).
     static func isUsableGhost(_ ghost: String) -> Bool {
         let s = ghost.trimmingCharacters(in: .whitespaces)
         guard !s.isEmpty else { return false }
         // Standalone terminal/closing punctuation is a valid suggestion on its own.
         let usableStandalone: Set<Character> = ["?", "!", ")", "]", "}"]
         if s.count == 1, let only = s.first, usableStandalone.contains(only) { return true }
+        // Echo-looped output ("l l l l") is never a useful suggestion.
+        guard !isDegenerateRepetition(s) else { return false }
         // Otherwise must contain at least one letter or digit — stray commas, ellipses, etc. are useless.
         guard s.contains(where: { $0.isLetter || $0.isNumber }) else { return false }
         // Lone backslash or backslash-only prefix.

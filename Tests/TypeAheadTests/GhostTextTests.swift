@@ -255,6 +255,44 @@ import Testing
         #expect(GhostText.isUsableGhost(". That is"))
     }
 
+    // MARK: - Degenerate repetition (dogfooding: "...for all the l" → " l l l l l")
+
+    @Test func rejectsSingleLetterEchoLoop() {
+        #expect(GhostText.isDegenerateRepetition("l l l l"))
+        #expect(!GhostText.isUsableGhost(" l l l l"))
+        #expect(!GhostText.isUsableGhost("a a a"))
+    }
+
+    @Test func rejectsRepeatedWordLoop() {
+        // Longer tokens loop too — equally useless.
+        #expect(GhostText.isDegenerateRepetition("the the the the"))
+        #expect(!GhostText.isUsableGhost("the the the the"))
+    }
+
+    @Test func repetitionIsCaseInsensitive() {
+        #expect(GhostText.isDegenerateRepetition("The the THE"))
+    }
+
+    @Test func allowsLegitimateDoubles() {
+        // Two tokens never trip the guard ("had had" is valid English), and a dominant
+        // token below 75% survives ("so so good" = 2/3).
+        #expect(!GhostText.isDegenerateRepetition("had had"))
+        #expect(!GhostText.isDegenerateRepetition("so so good"))
+        #expect(GhostText.isUsableGhost("had had before"))
+    }
+
+    @Test func allowsNormalSentences() {
+        #expect(!GhostText.isDegenerateRepetition("performance was excellent."))
+        #expect(GhostText.isUsableGhost(" performance was excellent."))
+    }
+
+    @Test func buildRejectsEchoLoopedRaw() {
+        // End-to-end through build(): the dogfooding case. typed ends mid-word at "l",
+        // model echo-loops it. The ghost must come back empty, not " l l l l".
+        let ghost = GhostText.build(typed: "for all the l", raw: " l l l l l", isFillInMiddle: true)
+        #expect(ghost.isEmpty)
+    }
+
     @Test func allowsNormalCompletions() {
         #expect(GhostText.isUsableGhost("coding is fun"))
         #expect(GhostText.isUsableGhost("ting "))     // suffix of "Wri" → "Writing"
