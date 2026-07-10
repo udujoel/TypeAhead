@@ -348,9 +348,14 @@ final class AppDependencies {
         // 1-2 characters. 8 chars = one meaningful word + space.
         guard context.textBeforeCursor.trimmingCharacters(in: .whitespacesAndNewlines).count >= 8 else { return }
 
-        // Suppress immediately after a sentence terminator (. ! ?). The model has no useful
-        // signal for the next clause until the user starts typing it.
-        guard !ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: context.textBeforeCursor) else { return }
+        // WP-B: attempt from the second word on, and NEVER stop attempting after a sentence
+        // terminator (. ! ?) — the old `ContextBuilder.shouldSuppressAtSentenceEnd` guard here
+        // meant a completion never even attempted at a sentence end. The owner wants suggestions
+        // "always... from the second word"; the firmer `PersonalizationEngine.buildInstruction`
+        // wording now supports the model starting a fresh sentence instead of trailing off.
+        // `shouldSuppressAtSentenceEnd` itself is left in place (unused by this pipeline) for
+        // possible future per-app policy use.
+        guard CompletionCoordinator.shouldAttemptCompletion(textBeforeCursor: context.textBeforeCursor) else { return }
 
         let prompt = ContextBuilder.buildPrompt(
             context: context,

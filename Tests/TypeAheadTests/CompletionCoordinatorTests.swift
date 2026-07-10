@@ -42,6 +42,37 @@ struct CompletionCoordinatorTests {
         #expect(outcome == .none)
     }
 
+    // MARK: - Second-word gating (WP-B)
+
+    @Test func shouldAttemptCompletionFalseForZeroWords() {
+        #expect(!CompletionCoordinator.shouldAttemptCompletion(textBeforeCursor: ""))
+        #expect(!CompletionCoordinator.shouldAttemptCompletion(textBeforeCursor: "   "))
+    }
+
+    @Test func shouldAttemptCompletionFalseForOneWord() {
+        #expect(!CompletionCoordinator.shouldAttemptCompletion(textBeforeCursor: "Hello"))
+        #expect(!CompletionCoordinator.shouldAttemptCompletion(textBeforeCursor: "Hello "))
+    }
+
+    @Test func shouldAttemptCompletionTrueForTwoOrMoreWords() {
+        #expect(CompletionCoordinator.shouldAttemptCompletion(textBeforeCursor: "Hello world"))
+        #expect(CompletionCoordinator.shouldAttemptCompletion(textBeforeCursor: "I went home. Then I"))
+    }
+
+    @Test func shouldAttemptCompletionIgnoresPunctuationOnlyTokens() {
+        // "-" and "..." are whitespace-separated tokens but contain no letter/digit, so they
+        // don't count toward the 2-word minimum.
+        #expect(!CompletionCoordinator.shouldAttemptCompletion(textBeforeCursor: "Hello - ..."))
+        #expect(CompletionCoordinator.shouldAttemptCompletion(textBeforeCursor: "Hello - world"))
+    }
+
+    @Test func shouldAttemptCompletionTrueAtSentenceEndWithTwoOrMoreWords() {
+        // WP-B: unlike the old shouldSuppressAtSentenceEnd guard, sentence-final punctuation no
+        // longer blocks an attempt once the 2-word floor is met.
+        #expect(CompletionCoordinator.shouldAttemptCompletion(textBeforeCursor: "I went home."))
+        #expect(CompletionCoordinator.shouldAttemptCompletion(textBeforeCursor: "How are you?"))
+    }
+
     // MARK: - Screen-context cache TTL
 
     @Test func shouldUseCachedScreenContextTrueWithinTTLAndSameApp() {

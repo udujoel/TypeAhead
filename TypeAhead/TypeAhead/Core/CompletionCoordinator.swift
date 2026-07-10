@@ -68,6 +68,28 @@ enum CompletionCoordinator {
         presentation != .suppress
     }
 
+    // MARK: - Second-word gating (WP-B: aggressive, persistent suggestions)
+
+    /// Whether a completion cycle should attempt inference at all, given the text before the
+    /// cursor. Replaces the old `ContextBuilder.shouldSuppressAtSentenceEnd` guard in
+    /// `runCompletion` — that guard suppressed completions right after `.`/`!`/`?`, so a
+    /// generation never even attempted at a sentence end. The owner wants the opposite:
+    /// suggestions "always predict... from the second word", including at sentence ends (the
+    /// model can start the next sentence — the firmer `PersonalizationEngine.buildInstruction`
+    /// wording now supports that).
+    ///
+    /// True iff `textBeforeCursor` contains at least 2 whitespace-separated tokens that each
+    /// contain a letter or digit — pure punctuation tokens (a lone "-" or "..." left over after
+    /// splitting on whitespace) don't count as a "word" for this purpose. `ContextBuilder.
+    /// shouldSuppressAtSentenceEnd` itself is left in place (function + tests) — retained for
+    /// possible future per-app policy use — but `runCompletion` no longer calls it.
+    static func shouldAttemptCompletion(textBeforeCursor: String) -> Bool {
+        let wordTokens = textBeforeCursor
+            .split(whereSeparator: { $0.isWhitespace })
+            .filter { $0.contains(where: { $0.isLetter || $0.isNumber }) }
+        return wordTokens.count >= 2
+    }
+
     // MARK: - Screen-context cache TTL
 
     /// One cached OCR screen-context read: the extracted text, when it was captured, and which
