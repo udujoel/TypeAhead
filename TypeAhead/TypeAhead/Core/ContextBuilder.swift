@@ -30,8 +30,10 @@ enum ContextBuilder {
     ///   160-char window spanned two paragraphs). Falls back to the full window only when
     ///   there is no earlier boundary (a single sentence — all the context we have).
     ///
-    /// `clipboard`/`history` are accepted for API compatibility but intentionally
-    /// excluded — small models complete more accurately from a focused prompt.
+    /// `history` is accepted for API compatibility but intentionally excluded — small
+    /// models complete more accurately from a focused prompt. `clipboard`, when present and
+    /// readable, is surfaced as a compact `[Clipboard: …]` hint (see below) — same treatment
+    /// as `screenContext`.
     static func buildPrompt(
         context: TextContext,
         clipboard: String?,
@@ -68,20 +70,30 @@ enum ContextBuilder {
             }
         }
 
-        // Prepend a compact screen-context hint so the model understands the user's topic
-        // (e.g. code they're reading, a document they're composing). Capped at 120 chars
-        // so small models aren't distracted by lengthy off-task OCR output.
-        // Defense-in-depth: skip the hint when the OCR text reads as garble (symbol soup or
-        // letter-substitution junk) that slipped through ScreenshotContextProvider's filter —
-        // contaminated context hurts completions more than missing context helps.
+        // Prepend compact context hints so the model understands the user's topic (e.g. code
+        // they're reading, a document they're composing, text they just copied). Each is
+        // capped at 120 chars so small models aren't distracted by lengthy off-task text.
+        // Defense-in-depth: skip a hint when it reads as garble (symbol soup or
+        // letter-substitution junk) — contaminated context hurts completions more than
+        // missing context helps. (For screen text this also catches OCR mis-reads that slip
+        // past ScreenshotContextProvider's own filter.)
+        var hints: [String] = []
         if let screen = screenContext?.trimmingCharacters(in: .whitespacesAndNewlines),
            !screen.isEmpty {
             let compact = String(screen.prefix(120))
             if OCRTextQuality.isLikelyReadable(compact) {
-                return "[Screen: \(compact)]\n\(prefix)"
+                hints.append("[Screen: \(compact)]")
             }
         }
-        return prefix
+        if let clip = clipboard?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !clip.isEmpty {
+            let compact = String(clip.prefix(120))
+            if OCRTextQuality.isLikelyReadable(compact) {
+                hints.append("[Clipboard: \(compact)]")
+            }
+        }
+        guard !hints.isEmpty else { return prefix }
+        return hints.joined(separator: "\n") + "\n" + prefix
     }
 
     /// Returns true when the cursor sits right after a sentence terminator (`.!?` and

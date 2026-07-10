@@ -1,14 +1,16 @@
 import SwiftUI
 
 enum SettingsSection: String, CaseIterable, Identifiable {
-    case setup, general, personalization, statistics, about
+    case setup, general, apps, personalization, statistics, diagnostics, about
     var id: String { rawValue }
     var label: String {
         switch self {
         case .setup:            "Setup"
         case .general:          "General"
+        case .apps:              "Apps"
         case .personalization:  "Personalization"
         case .statistics:       "Statistics"
+        case .diagnostics:      "Diagnostics"
         case .about:            "About"
         }
     }
@@ -16,8 +18,10 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .setup:            "checkmark.shield.fill"
         case .general:          "slider.horizontal.3"
+        case .apps:              "app.badge.checkmark.fill"
         case .personalization:  "person.crop.circle.fill"
         case .statistics:       "chart.bar.fill"
+        case .diagnostics:      "wrench.and.screwdriver.fill"
         case .about:            "info.circle.fill"
         }
     }
@@ -25,8 +29,10 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .setup:            .green
         case .general:          .blue
+        case .apps:              .indigo
         case .personalization:  .purple
         case .statistics:       .orange
+        case .diagnostics:      .teal
         case .about:            .gray
         }
     }
@@ -54,8 +60,10 @@ struct SettingsWindow: View {
                 switch selectedSection {
                 case .setup:            SetupView()
                 case .general:          GeneralView()
+                case .apps:              AppsView()
                 case .personalization:  PersonalizationView()
                 case .statistics:       StatisticsView()
+                case .diagnostics:      DiagnosticsView()
                 case .about:            AboutView()
                 }
             }

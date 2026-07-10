@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 enum ModelStatus: Equatable {
     case notDownloaded
@@ -19,6 +20,7 @@ enum ModelStatus: Equatable {
 @Observable
 @MainActor
 final class ModelManager {
+    private let logger = Logger(subsystem: "app.typeahead", category: "ModelManager")
 
     private(set) var statuses: [String: ModelStatus] = [:]
     private let inferenceEngine: InferenceEngine
@@ -72,7 +74,7 @@ final class ModelManager {
             statuses[config.id] = .active
             settings.activeModelID = config.id
         } catch {
-            print("❌ ModelManager.downloadAndActivate failed for \(config.id): \(error)")
+            logger.error("downloadAndActivate failed for \(config.id, privacy: .public): \(error.localizedDescription, privacy: .public)")
             statuses[config.id] = .notDownloaded
         }
     }

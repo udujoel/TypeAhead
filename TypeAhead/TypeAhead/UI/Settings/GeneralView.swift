@@ -3,7 +3,6 @@ import SwiftUI
 struct GeneralView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(ModelManager.self) private var modelManager
-    @State private var newBundleID = ""
 
     private var recommendedModel: ModelConfig {
         let ramGB = Int(ProcessInfo.processInfo.physicalMemory / (1024 * 1024 * 1024))
@@ -61,62 +60,31 @@ struct GeneralView: View {
                 }
             }
 
-            Section("Context") {
+            Section {
                 Toggle("Use Clipboard Context", isOn: $s.useClipboardContext)
-                Toggle("Use Screenshot Context", isOn: $s.useScreenshotContext)
-            }
-
-            Section("App") {
-                Toggle("Launch at Login", isOn: $s.launchAtLogin)
-                Toggle("Enable Emoji Suggestions", isOn: $s.emojiSuggestionsEnabled)
-                Toggle("Show in All Apps", isOn: $s.showInAllApps)
+                Toggle("Use Screen Context", isOn: $s.useScreenshotContext)
+            } header: {
+                Text("Context")
+            } footer: {
+                Text("Screen Context reads on-screen text with on-device OCR to sharpen suggestions. Everything stays on this Mac — nothing is ever uploaded.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section {
-                if settings.exceptionList.bundleIDs.isEmpty {
-                    Text("No exceptions — completions appear in every app.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(settings.exceptionList.bundleIDs, id: \.self) { bundleID in
-                        HStack {
-                            Text(bundleID)
-                                .font(.system(.body, design: .monospaced))
-                            Spacer()
-                            Button {
-                                settings.exceptionList.remove(bundleID: bundleID)
-                            } label: {
-                                Image(systemName: "minus.circle.fill")
-                                    .foregroundStyle(.red.opacity(0.8))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-                HStack(spacing: 8) {
-                    TextField("com.example.app", text: $newBundleID)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { addBundleID() }
-                    Button("Add") { addBundleID() }
-                        .disabled(newBundleID.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
+                Toggle("Launch at Login", isOn: $s.launchAtLogin)
+                Toggle("Enable Emoji Suggestions", isOn: $s.emojiSuggestionsEnabled)
+                Toggle("Show in All Apps", isOn: $s.showInAllApps)
             } header: {
-                Text("Per-App Exceptions")
+                Text("App")
             } footer: {
-                Text("TypeAhead won't suggest completions in excluded apps. Bundle IDs can be found via System Information or \u{2018}osascript -e id of app \"AppName\"\u{2019}.")
+                Text("Per-app controls — including exceptions — moved to the Apps section.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
         .navigationTitle("General")
-    }
-
-    private func addBundleID() {
-        let trimmed = newBundleID.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty, !settings.exceptionList.isExcluded(bundleID: trimmed) else { return }
-        settings.exceptionList.add(bundleID: trimmed)
-        newBundleID = ""
     }
 }
 

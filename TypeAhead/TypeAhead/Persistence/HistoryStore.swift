@@ -6,8 +6,39 @@ final class HistoryStore {
     private let container: ModelContainer
 
     init(inMemory: Bool = false) {
-        let config = ModelConfiguration(isStoredInMemoryOnly: inMemory)
+        let config: ModelConfiguration
+        if inMemory {
+            config = ModelConfiguration(isStoredInMemoryOnly: true)
+        } else {
+            // Store under an app-namespaced path (CLAUDE.md: "~/Library/Application
+            // Support/TypeAhead/history.db"), not SwiftData's un-namespaced default
+            // ("~/Library/Application Support/default.store") — with no sandbox, that
+            // default location is a bare filename any other SwiftData app on the Mac
+            // could collide with.
+            let supportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("TypeAhead", isDirectory: true)
+            try? FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
+            let storeURL = supportDir.appendingPathComponent("history.db")
+            config = ModelConfiguration(url: storeURL)
+        }
         container = try! ModelContainer(for: HistoryRecord.self, configurations: config)
+        if !inMemory {
+            Self.restrictPermissions(config: config)
+        }
+    }
+
+    /// The history store holds no real encryption (plain SwiftData/SQLite — see CLAUDE.md), so
+    /// as a minimal at-rest hardening step, restrict the on-disk file(s) to owner read/write
+    /// only (0600) right after the container creates them. Best-effort: failure here doesn't
+    /// prevent the app from working, just leaves the default (looser) file permissions.
+    private static func restrictPermissions(config: ModelConfiguration) {
+        guard let url = config.url as URL? else { return }
+        let fm = FileManager.default
+        // SQLite stores as up to three files on disk: the main store, "-wal", and "-shm".
+        let candidates = [url, URL(fileURLWithPath: url.path + "-wal"), URL(fileURLWithPath: url.path + "-shm")]
+        for fileURL in candidates where fm.fileExists(atPath: fileURL.path) {
+            try? fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+        }
     }
 
     func record(accepted text: String, appName: String) throws {

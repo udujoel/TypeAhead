@@ -74,7 +74,7 @@ struct SetupView: View {
                     SetupStepRow(
                         step: 3,
                         title: "Screen Recording",
-                        description: "Optional — gives richer context for better suggestions. Processed on-device, never uploaded.",
+                        description: "Optional — powers Screen Context, which reads on-screen text for richer suggestions. Processed on-device, never uploaded. (macOS calls this permission \u{201C}Screen Recording.\u{201D})",
                         isComplete: screenRecordingGranted,
                         isRequired: false
                     ) {

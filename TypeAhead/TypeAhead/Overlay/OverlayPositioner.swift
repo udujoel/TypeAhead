@@ -40,6 +40,21 @@ enum OverlayPositioner {
         return NSPoint(x: clampedX, y: clampedY)
     }
 
+    /// Origin for a bar anchored to the focused text element's own frame — just ABOVE the
+    /// compose box, left-aligned with a small inset, so the ghost is clearly associated with
+    /// the input without covering the text being typed. Used for Electron apps whose caret
+    /// bounds lie but whose element frame is still valid (e.g. Claude desktop); one rung more
+    /// precise than the window-corner `pinnedOrigin`.
+    static func elementAnchoredOrigin(elementFrame: NSRect, panelSize: NSSize) -> NSPoint {
+        let x = elementFrame.minX + 8
+        let y = elementFrame.maxY + 4
+        let screen = NSScreen.screens.first {
+            NSPointInRect(elementFrame.origin, $0.frame)
+        } ?? NSScreen.main
+        guard let screen else { return NSPoint(x: x, y: y) }
+        return clampedOrigin(x: x, y: y, panelSize: panelSize, visibleFrame: screen.visibleFrame)
+    }
+
     /// Origin for a bar pinned just above the focused window's bottom edge (where chat/input
     /// fields live). Used as the last resort when neither Vision nor AX can locate the caret.
     /// X is placed at 25% from the window's left edge — past typical left sidebars in

@@ -92,8 +92,36 @@ import Testing
     @Test func personaNoteCapsTooLongInstructions() {
         let long = String(repeating: "a", count: 500)
         let note = PersonalizationEngine.buildPersonaNote(customInstructions: long, examples: [])
-        // Should not exceed the 400-char cap + ellipsis
-        #expect((note?.count ?? 0) < 420)
+        // Should not exceed the ~200-char combined cap + ellipsis
+        #expect((note?.count ?? 0) < 220)
+    }
+
+    @Test func personaNoteIncludesAppStyleInstruction() {
+        let note = PersonalizationEngine.buildPersonaNote(
+            customInstructions: "",
+            examples: [],
+            appStyleInstruction: "Keep it terse and casual."
+        )
+        #expect(note?.contains("Keep it terse and casual.") == true)
+    }
+
+    @Test func personaNoteIgnoresEmptyAppStyleInstruction() {
+        let note = PersonalizationEngine.buildPersonaNote(
+            customInstructions: "I'm a writer.",
+            examples: [],
+            appStyleInstruction: "   "
+        )
+        #expect(note == "I'm a writer.")
+    }
+
+    @Test func personaNoteCapsCombinedTextAroundTwoHundredChars() {
+        let long = String(repeating: "b", count: 300)
+        let note = PersonalizationEngine.buildPersonaNote(
+            customInstructions: "Custom instructions here.",
+            examples: ["therefore", "however"],
+            appStyleInstruction: long
+        )
+        #expect((note?.count ?? 0) <= 201)
     }
 
     // MARK: - PersonalizationEngine.buildInstruction (delegates from InferenceEngine)
@@ -112,5 +140,35 @@ import Testing
         let instruction = PersonalizationEngine.buildInstruction(personaNote: "Medical context.")
         #expect(instruction.hasPrefix("Medical context."))
         #expect(instruction.contains(PersonalizationEngine.baseInstruction))
+    }
+
+    // MARK: - buildInstruction suffix hint (WS4: real suffix awareness)
+
+    @Test func buildInstructionWithEmptySuffixIsByteIdenticalToNoSuffix() {
+        let withDefault = PersonalizationEngine.buildInstruction(personaNote: "note")
+        let withEmptyArg = PersonalizationEngine.buildInstruction(personaNote: "note", suffix: "")
+        #expect(withDefault == withEmptyArg)
+        #expect(withDefault == "note\n\n\(PersonalizationEngine.baseInstruction)")
+    }
+
+    @Test func buildInstructionWithNonEmptySuffixAppendsHint() {
+        let instruction = PersonalizationEngine.buildInstruction(personaNote: nil, suffix: " jumps over the lazy dog")
+        #expect(instruction.hasPrefix(PersonalizationEngine.baseInstruction))
+        #expect(instruction.contains("jumps over the lazy dog"))
+        #expect(instruction.contains("must not repeat it"))
+    }
+
+    @Test func buildInstructionCapsSuffixHintAt120Chars() {
+        // "z" doesn't appear anywhere in the base instruction or hint scaffolding text,
+        // so counting occurrences isolates exactly how much of the suffix made it through.
+        let longSuffix = String(repeating: "z", count: 500)
+        let instruction = PersonalizationEngine.buildInstruction(personaNote: nil, suffix: longSuffix)
+        let hintZCount = instruction.filter { $0 == "z" }.count
+        #expect(hintZCount == 120)
+    }
+
+    @Test func buildInstructionWithWhitespaceOnlySuffixUsesBase() {
+        let instruction = PersonalizationEngine.buildInstruction(personaNote: nil, suffix: "   \n  ")
+        #expect(instruction == PersonalizationEngine.baseInstruction)
     }
 }

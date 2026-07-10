@@ -52,9 +52,9 @@ KeyEventMonitor → CompletionPipeline → InferenceEngine
 - All inference runs on-device. No network calls for completions ever.
 - Never read `kAXPasswordRole` fields — the AX API blocks this by design, do not attempt workarounds.
 - Cancel active inference immediately on any non-Tab keystroke.
-- Per-app exception list (bundle IDs) always takes precedence over global toggle.
+- Per-app exception list (bundle IDs) always takes precedence over global toggle. An explicit per-app override (`AppPolicyResolver`, Settings → Apps) takes precedence over the exception list, so a user can re-enable completions for a specific excluded app.
 - Model files download to `~/Library/Caches/models/{repoId}/` via MLXLLM. Never bundle models; never hardcode paths.
-- History DB lives in `~/Library/Application Support/TypeAhead/history.db` — encrypted.
+- History DB lives in `~/Library/Application Support/TypeAhead/history.db` — plain SwiftData/SQLite, not encrypted at rest; the file is chmod 0600 (owner read/write only) and never leaves the Mac. Real at-rest encryption is out of scope (see overhaul design doc, WS1) — don't claim "encrypted" in UI copy.
 - **AX responsible process:** Use `./run.sh` to launch (LaunchServices). Never use Cmd+R (debugger becomes responsible process, AX reads fail -25204 even when trusted).
 - **CGEventTap callback:** Return `handleGlobal()`'s value directly; never use `?? passRetained(event)` (coalesces swallow-nil into passthrough). See KeyEventMonitor.swift.
 
