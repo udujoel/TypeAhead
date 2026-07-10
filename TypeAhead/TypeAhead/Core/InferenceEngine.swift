@@ -150,12 +150,20 @@ final class InferenceEngine {
     ///
     /// - Parameter personaNote: Optional persona/style note from PersonalizationEngine
     ///   (customInstructions + frequent history words). Prepended to the base instruction.
+    /// - Parameter temperature: sampling temperature for `GenerateParameters`. WP-B: the
+    ///   retry-once-on-unusable-generation flow (`AppDependencies.runCompletion`) calls this a
+    ///   second time with a higher temperature (0.8) when the first attempt (default 0.5)
+    ///   produced no usable ghost — a different sample from the same distribution is often
+    ///   enough to escape a degenerate '.'/'...'/empty-line output. The KV-cache (WS6) is keyed
+    ///   on the token prefix, not sampling params, so the retry's prefill is still a cache hit —
+    ///   only the (much cheaper) sampling step differs.
     func complete(
         prompt: String,
         suffix: String = "",
         maxTokens: Int,
         maxWords: Int = 0,
         personaNote: String? = nil,
+        temperature: Float = 0.5,
         onUpdate: @escaping @Sendable (String) -> Void,
         onComplete: @escaping @Sendable () -> Void
     ) {
@@ -163,7 +171,11 @@ final class InferenceEngine {
 
         currentTask?.cancel()
 
-        let instruction = PersonalizationEngine.buildInstruction(personaNote: personaNote, suffix: suffix)
+        // maxWords==0 means "no display cap" (see GhostText's doc comment) — the instruction
+        // still needs a concrete number to tell the model, so fall back to the medium default
+        // (4) rather than telling it "at most 0 words".
+        let instructionTargetWords = maxWords > 0 ? maxWords : 4
+        let instruction = PersonalizationEngine.buildInstruction(personaNote: personaNote, suffix: suffix, targetWords: instructionTargetWords)
 
         // ASSISTANT-PREFILL (assembled in HFBridge): the model turn is seeded with `prompt`
         // and left open, so the instruct model continues the user's own text in-distribution.
@@ -184,10 +196,13 @@ final class InferenceEngine {
         // No repetitionPenalty: it penalizes prompt tokens too, which pushed the
         // model toward newline/whitespace output. The maxWords cap handles visible
         // rambling instead. Slightly higher temperature gives real words a better
-        // chance over a deterministic newline on short, ambiguous prefixes.
+        // chance over a deterministic newline on short, ambiguous prefixes. WP-B: `temperature`
+        // is now a parameter (default 0.5, same as before) so the retry-once flow in
+        // `AppDependencies.runCompletion` can re-sample at a higher temperature (0.8) when the
+        // first attempt produced no usable ghost.
         let params = GenerateParameters(
             maxTokens: maxTokens,
-            temperature: 0.5,
+            temperature: temperature,
             topP: 0.9
         )
 
