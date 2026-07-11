@@ -180,6 +180,13 @@ import Testing
         #expect(PersonalizationEngine.baseInstruction(targetWords: 20).contains("at least 2 and at most 20 words"))
     }
 
+    @Test func baseInstructionRequiresEnglish() {
+        // Dogfooding: Gemma is multilingual and produced an Italian ghost with no constraint
+        // in place. This is a hard-coded English-only instruction for now; a future language
+        // setting should replace it (see also GhostText.isLikelyEnglish for the output-side gate).
+        #expect(PersonalizationEngine.baseInstruction(targetWords: 4).contains("Write only in English."))
+    }
+
     @Test func baseInstructionBansPunctuationOnlyAndEmptyReplies() {
         let instruction = PersonalizationEngine.baseInstruction(targetWords: 4)
         #expect(instruction.contains("Never reply with only punctuation, an ellipsis, or an empty line"))

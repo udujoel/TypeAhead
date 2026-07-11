@@ -54,10 +54,10 @@ final class PersonalizationEngine {
     ///   the instruction and the display cap always agree.
     nonisolated static func baseInstruction(targetWords: Int) -> String {
         "Continue the text the user is writing. Always continue with at least 2 and at most "
-        + "\(targetWords) words that come naturally, matching their wording and style. Never "
-        + "reply with only punctuation, an ellipsis, or an empty line — always predict the "
-        + "most likely next words. Do not repeat what they already wrote, and do not add "
-        + "quotes, labels, or explanations."
+        + "\(targetWords) words that come naturally, matching their wording and style. Write "
+        + "only in English. Never reply with only punctuation, an ellipsis, or an empty line — "
+        + "always predict the most likely next words. Do not repeat what they already wrote, "
+        + "and do not add quotes, labels, or explanations."
     }
 
     /// Defensive re-cap for the suffix hint appended to the instruction. `ContextBuilder.buildSuffix`

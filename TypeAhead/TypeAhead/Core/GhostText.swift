@@ -278,6 +278,33 @@ enum GhostText {
         return Double(dominant) / Double(tokens.count) >= 0.75
     }
 
+    /// True when `ghost` looks like English text — a defense-in-depth output gate alongside
+    /// the "Write only in English." sentence in `PersonalizationEngine.baseInstruction`.
+    /// Gemma is multilingual and nothing else constrains the reply language; dogfooding
+    /// surfaced an Italian ghost ("tua disponibilità è molto") when the user's line started
+    /// with "La" and the instruction alone wasn't enough to stop it.
+    ///
+    /// Heuristic: among the alphabetic characters in `ghost`, more than ~30% falling outside
+    /// plain ASCII a-zA-Z is treated as non-English. That catches Italian/French accents,
+    /// Cyrillic, CJK, etc. — whole non-Latin scripts are ~100% non-ASCII letters, and even a
+    /// short accented phrase ("però è già lì") crosses the 30% bar — while plain English text
+    /// with an occasional accented name or loanword ("café meeting tomorrow") stays well under
+    /// it and passes through untouched. Non-letter characters (digits, punctuation, whitespace)
+    /// don't count on either side of the ratio.
+    ///
+    /// NOTE: this hard-codes English-only per the owner's explicit request for now. A future
+    /// per-user language setting should replace this blanket gate.
+    static func isLikelyEnglish(_ ghost: String) -> Bool {
+        var alphabeticCount = 0
+        var nonASCIICount = 0
+        for ch in ghost where ch.isLetter {
+            alphabeticCount += 1
+            if !ch.isASCII { nonASCIICount += 1 }
+        }
+        guard alphabeticCount > 0 else { return true }
+        return Double(nonASCIICount) / Double(alphabeticCount) <= 0.3
+    }
+
     /// Returns false for ghost text that is clearly junk — would confuse rather than help.
     ///
     /// Rejects:
@@ -287,6 +314,7 @@ enum GhostText {
     /// - Any string with no letters or digits UNLESS it's a standalone terminal punctuation
     ///   character (?, !, ), ], }) — those are useful punctuation suggestions.
     /// - Echo-looped repetition (see `isDegenerateRepetition`).
+    /// - Non-English text (see `isLikelyEnglish`).
     static func isUsableGhost(_ ghost: String) -> Bool {
         let s = ghost.trimmingCharacters(in: .whitespaces)
         guard !s.isEmpty else { return false }
@@ -303,6 +331,8 @@ enum GhostText {
         // A hyphen IS valid mid-word ("well-" in "well-defined") but not as the
         // very first character of a ghost that would be appended to partial text.
         if s.hasPrefix("-"), let second = s.dropFirst().first, second.isLetter { return false }
+        // Defense-in-depth against non-English output — see isLikelyEnglish doc comment.
+        guard isLikelyEnglish(s) else { return false }
         return true
     }
 }

@@ -321,6 +321,37 @@ import Testing
         #expect(ghost.isEmpty)
     }
 
+    // MARK: - English-only gate (dogfooding: Italian ghost "tua disponibilità è molto")
+
+    @Test func isLikelyEnglishRejectsItalianAccents() {
+        #expect(!GhostText.isLikelyEnglish("però è già lì"))
+        #expect(!GhostText.isUsableGhost("però è già lì"))
+    }
+
+    @Test func isLikelyEnglishAcceptsPlainEnglish() {
+        #expect(GhostText.isLikelyEnglish("solutions for real problems"))
+        #expect(GhostText.isUsableGhost("solutions for real problems"))
+    }
+
+    @Test func isLikelyEnglishAcceptsOccasionalAccentedName() {
+        // A loanword/name with one accented character shouldn't tank an otherwise-English ghost.
+        #expect(GhostText.isLikelyEnglish("café meeting tomorrow"))
+        #expect(GhostText.isUsableGhost("café meeting tomorrow"))
+    }
+
+    @Test func isLikelyEnglishRejectsCJK() {
+        #expect(!GhostText.isLikelyEnglish("こんにちは世界"))
+        #expect(!GhostText.isUsableGhost("こんにちは世界"))
+    }
+
+    @Test func buildFiltersNonEnglishRaw() {
+        // End-to-end: an Italian raw completion (representative of the dogfooding case —
+        // "tua disponibilità è molto" — but with enough accented density to clear the 30%
+        // char-ratio bar) becomes an empty ghost via build().
+        let ghost = GhostText.build(typed: "La ", raw: "però è già lì", isFillInMiddle: true)
+        #expect(ghost.isEmpty)
+    }
+
     // MARK: - Suffix awareness (WS4): don't duplicate text already after the cursor
 
     @Test func trimSuffixOverlapCutsDuplicatedTail() {
