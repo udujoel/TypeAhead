@@ -15,8 +15,13 @@ open TypeAhead.xcodeproj
 swift test
 
 # Full app build (headless, signing disabled for compile-check)
-cd TypeAhead && xcodebuild build -project TypeAhead.xcodeproj -scheme TypeAhead -destination 'platform=macOS' -configuration Debug CODE_SIGNING_ALLOWED=NO
+# ALWAYS pass an isolated -derivedDataPath for this command — never omit it.
+cd TypeAhead && xcodebuild build -project TypeAhead.xcodeproj -scheme TypeAhead -destination 'platform=macOS' -configuration Debug CODE_SIGNING_ALLOWED=NO -derivedDataPath /tmp/typeahead-compile-check
 ```
+
+**Never launch the product of this compile-check** — it is ad-hoc signed (CODE_SIGNING_ALLOWED=NO), and launching it (e.g. via run.sh) poisons the Accessibility (TCC) grant for the real Xcode-built app, forcing a re-grant on every subsequent rebuild. The isolated -derivedDataPath keeps it out of the directory run.sh launches from.
+
+**Note for agents:** any headless/scripted compile-check invocation of `xcodebuild` MUST use an isolated `-derivedDataPath` (e.g. `/tmp/typeahead-compile-check`), never the default DerivedData directory. `run.sh` finds and launches the newest build under `~/Library/Developer/Xcode/DerivedData/TypeAhead-*/...`; a compile-check build left there is ad-hoc signed and, if launched, breaks the Accessibility permission (see `docs/signing.md` for recovery steps).
 
 ## Requirements
 - macOS 14+ (Sonoma)
