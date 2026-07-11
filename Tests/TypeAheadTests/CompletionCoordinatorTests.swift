@@ -73,6 +73,22 @@ struct CompletionCoordinatorTests {
         #expect(CompletionCoordinator.shouldAttemptCompletion(textBeforeCursor: "How are you?"))
     }
 
+    // MARK: - Retry-once on unusable generation (WP-B)
+
+    @Test func shouldRetryGenerationTrueOnFirstAttemptWithNoUsableGhost() {
+        #expect(CompletionCoordinator.shouldRetryGeneration(attempt: 0, producedUsableGhost: false))
+    }
+
+    @Test func shouldRetryGenerationFalseOnFirstAttemptWithUsableGhost() {
+        #expect(!CompletionCoordinator.shouldRetryGeneration(attempt: 0, producedUsableGhost: true))
+    }
+
+    @Test func shouldRetryGenerationFalseOnSecondAttemptRegardlessOfOutcome() {
+        // Never retry more than once.
+        #expect(!CompletionCoordinator.shouldRetryGeneration(attempt: 1, producedUsableGhost: false))
+        #expect(!CompletionCoordinator.shouldRetryGeneration(attempt: 1, producedUsableGhost: true))
+    }
+
     // MARK: - Screen-context cache TTL
 
     @Test func shouldUseCachedScreenContextTrueWithinTTLAndSameApp() {

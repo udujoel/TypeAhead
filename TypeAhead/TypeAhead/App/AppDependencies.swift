@@ -405,45 +405,99 @@ final class AppDependencies {
         // newline it shouldn't see.
         let mirrorTypedText = context.textBeforeCursor
 
-        inferenceEngine.complete(
-            prompt: prompt,
-            suffix: suffix,
-            maxTokens: settings.completionLength.maxTokens,
-            maxWords: settings.completionLength.maxWords,
-            personaNote: personaNote
-        ) { [weak self] full in
-            // Called on the model executor — hop to main to touch UI.
-            Task { @MainActor [weak self] in
-                guard let self, !full.isEmpty else { return }
-                // Focus moved since this generation started (handleFocusChange bumped the epoch and
-                // already hid the overlay). This callback was scheduled before that and would
-                // otherwise re-show the prior field's suggestion in the new one. Drop it.
-                guard focusEpoch.mayAccept(stampedEpoch: generationEpoch) else { return }
-                let firstPaint = overlayController.showOrUpdateML(
-                    ghost: full,
-                    epoch: generationEpoch,
-                    cursorRect: cursorRect,
-                    fontSize: fontSize,
-                    presentation: placement.presentation,
-                    tier: placement.tier,
-                    textBeforeCursor: mirrorTypedText
-                )
-                // Only the FIRST paint of a generation cycle counts as "shown" — every subsequent
-                // streamed token update goes through the update-in-place branch inside
-                // `showOrUpdateML`, which intentionally does not re-record. A `.suppress`
-                // presentation never reaches here at all — the WS5 early-out above returns before
-                // inference even starts (and records `placementSuppressed` itself).
-                if firstPaint {
-                    logger.debug("overlay.show '\(full.prefix(40), privacy: .private)' at \(cursorRect.origin.debugDescription, privacy: .public)")
-                    recordSuggestionEvent(
-                        kind: .shown,
-                        promptTail: promptTail,
-                        ghostText: full,
-                        latencyMs: Date().timeIntervalSince(generationStart) * 1000,
-                        metadata: "ml,tier=\(placement.tier.rawValue)"
+        // WP-B retry-once (item 3): snapshot the pipeline's fire counter now, before any
+        // inference starts. `CompletionPipeline.fire()` increments this on every debounce/
+        // max-wait fire — including the one that's running THIS cycle — so if it's still equal
+        // to this snapshot when a generation completes, no newer keystroke has started a
+        // fresher cycle in the meantime. Combined with `focusEpoch.mayAccept`, this is the
+        // staleness guard the retry checks before re-firing: either signal moving means abort,
+        // never retry. (A newer keystroke during attempt 0 would also have called
+        // `inferenceEngine.complete` again directly, which cancels `currentTask` — cancellation
+        // already skips `onComplete` entirely, per `InferenceEngine.complete`'s `if
+        // !Task.isCancelled { onComplete() }` — so the counter check below is belt-and-suspenders
+        // for the case where attempt 0 finishes just as a new cycle is about to fire.)
+        let cycleFireCount = completionPipeline.inferenceCallCount
+
+        func runInference(temperature: Float, attempt: Int) {
+            // Tracks whether this attempt ever produced a usable ghost (a non-empty `full` —
+            // InferenceEngine.ghostText/GhostText.build already collapses junk output to "").
+            // A tiny `@unchecked Sendable` box (same pattern as InferenceEngine's
+            // `PromptCacheBox`) because `onUpdate`/`onComplete` are both `@Sendable` and need to
+            // share this one flag across the same generation.
+            let outcome = GenerationOutcome()
+
+            inferenceEngine.complete(
+                prompt: prompt,
+                suffix: suffix,
+                maxTokens: settings.completionLength.maxTokens,
+                maxWords: settings.completionLength.maxWords,
+                personaNote: personaNote,
+                temperature: temperature
+            ) { [weak self] full in
+                // Called on the model executor — hop to main to touch UI.
+                Task { @MainActor [weak self] in
+                    guard let self, !full.isEmpty else { return }
+                    outcome.producedUsableGhost = true
+                    // Focus moved since this generation started (handleFocusChange bumped the epoch and
+                    // already hid the overlay). This callback was scheduled before that and would
+                    // otherwise re-show the prior field's suggestion in the new one. Drop it.
+                    guard focusEpoch.mayAccept(stampedEpoch: generationEpoch) else { return }
+                    let firstPaint = overlayController.showOrUpdateML(
+                        ghost: full,
+                        epoch: generationEpoch,
+                        cursorRect: cursorRect,
+                        fontSize: fontSize,
+                        presentation: placement.presentation,
+                        tier: placement.tier,
+                        textBeforeCursor: mirrorTypedText
                     )
+                    // Only the FIRST paint of a generation cycle counts as "shown" — every subsequent
+                    // streamed token update goes through the update-in-place branch inside
+                    // `showOrUpdateML`, which intentionally does not re-record. A `.suppress`
+                    // presentation never reaches here at all — the WS5 early-out above returns before
+                    // inference even starts (and records `placementSuppressed` itself).
+                    if firstPaint {
+                        logger.debug("overlay.show '\(full.prefix(40), privacy: .private)' at \(cursorRect.origin.debugDescription, privacy: .public)")
+                        recordSuggestionEvent(
+                            kind: .shown,
+                            promptTail: promptTail,
+                            ghostText: full,
+                            latencyMs: Date().timeIntervalSince(generationStart) * 1000,
+                            metadata: "ml,tier=\(placement.tier.rawValue)"
+                        )
+                    }
+                }
+            } onComplete: { [weak self] in
+                // Called on the model executor (see onUpdate's comment above) — hop to main
+                // before touching any AppDependencies state.
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    guard CompletionCoordinator.shouldRetryGeneration(
+                        attempt: attempt, producedUsableGhost: outcome.producedUsableGhost
+                    ) else { return }
+                    // Staleness guards — see the comment on `cycleFireCount` above: abort the
+                    // retry if focus moved on, or a newer keystroke already started a fresher
+                    // cycle, since either means this prompt is no longer relevant.
+                    guard focusEpoch.mayAccept(stampedEpoch: generationEpoch) else { return }
+                    guard completionPipeline.inferenceCallCount == cycleFireCount else { return }
+                    // No user text logged — matches the rest of this file's privacy discipline.
+                    logger.info("retrying generation: attempt 0 produced no usable ghost, retrying at temperature=0.8")
+                    runInference(temperature: 0.8, attempt: 1)
                 }
             }
-        } onComplete: {}
+        }
+
+        runInference(temperature: 0.5, attempt: 0)
     }
+}
+
+/// Tiny mutable box shared between a generation's `onUpdate`/`onComplete` closures (WP-B retry)
+/// so `runCompletion` can tell, once a generation finishes, whether it ever produced a usable
+/// ghost. `@unchecked Sendable` is deliberate: `InferenceEngine.complete` only ever has one
+/// generation in flight per `runInference` call (each call creates its own fresh box), and every
+/// read/write of `producedUsableGhost` happens inside a `Task { @MainActor in ... }` hop, so
+/// there's no actual concurrent access despite crossing the `@Sendable` closure boundary — same
+/// reasoning `InferenceEngine`'s own `PromptCacheBox` documents.
+private final class GenerationOutcome: @unchecked Sendable {
+    var producedUsableGhost = false
 }

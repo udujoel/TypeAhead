@@ -90,6 +90,16 @@ enum CompletionCoordinator {
         return wordTokens.count >= 2
     }
 
+    // MARK: - Retry-once on unusable generation (WP-B)
+
+    /// Whether `runCompletion` should re-run the same prompt (at a higher temperature) after a
+    /// generation completed but produced no usable ghost. True only on the very first attempt
+    /// (`attempt == 0`) when nothing usable came out — never on the retry itself, so this can
+    /// never recurse more than once regardless of how many times a caller asks.
+    static func shouldRetryGeneration(attempt: Int, producedUsableGhost: Bool) -> Bool {
+        attempt == 0 && !producedUsableGhost
+    }
+
     // MARK: - Screen-context cache TTL
 
     /// One cached OCR screen-context read: the extracted text, when it was captured, and which
