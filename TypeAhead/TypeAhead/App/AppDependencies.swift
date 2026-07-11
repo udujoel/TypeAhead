@@ -81,6 +81,11 @@ final class AppDependencies {
             overlayController.hide(animated: false)
         }
         focusEpoch.focusChanged()
+        // WP-5 (P1): drop the screen-context OCR cache on every focus change (app switch or
+        // in-field switch) rather than relying solely on the TTL below. This is the actual
+        // "new field/app gets fresh context" guarantee; the TTL just bounds how stale a
+        // same-field re-read can get between focus changes, so it can be generous.
+        screenContextCache = nil
     }
 
     /// Records a suggestion-lifecycle event to both the persisted `eventStore` (lengths only)
@@ -124,8 +129,15 @@ final class AppDependencies {
         Task { @MainActor in try? store.record(event) }
     }
 
+    // WP-5 (P1): was 2.0s. At 2s, any OCR drift (including the ghost overlay itself appearing in
+    // the screenshot) changes prompt token 0 (`[Screen: ...]` is prepended to the prompt head —
+    // see ContextBuilder.buildPrompt), forcing a full KV-cache rebuild every <=2s even when the
+    // user hasn't changed fields. `handleFocusChange` above now invalidates this cache on every
+    // focus/app change, which is the real correctness boundary ("new field/app gets fresh
+    // context") — the TTL here only bounds staleness of a same-field re-read between those
+    // focus changes, so it can be generous without letting stale context leak across fields.
     private var screenContextCache: CompletionCoordinator.ScreenContextCache?
-    private let screenContextCacheTTL: TimeInterval = 2.0
+    private let screenContextCacheTTL: TimeInterval = 30.0
 
     private func runCompletion() async {
         // Latency measurement (WS2): stamped here, at the moment the debounced pipeline fires
