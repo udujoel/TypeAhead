@@ -1,4 +1,5 @@
 import Foundation
+import NaturalLanguage
 
 /// Turns a model's raw streamed output into the inline ghost text to display.
 ///
@@ -278,23 +279,43 @@ enum GhostText {
         return Double(dominant) / Double(tokens.count) >= 0.75
     }
 
+    /// Language ID on very short fragments is unreliable (NLLanguageRecognizer calls "ting "
+    /// Norwegian and "bonjour" is a single loanword away from normal English prose), so the
+    /// recognizer layer only runs on ghosts with at least this many words. Shorter ghosts are
+    /// accepted unless the char-ratio pre-filter already rejected them.
+    private static let languageIDMinWords = 3
+
+    /// Minimum recognizer confidence in a non-English dominant language before rejecting.
+    /// Tuned against real phrases: the dogfooding Italian ghost scores it=1.000, "bonjour"
+    /// scores fr=0.632 (but is under the word floor), while an English phrase with a loanword
+    /// ("café meeting tomorrow") comes back dominant-English at en=0.497 — never near this bar
+    /// for a wrong language. Below the bar we accept: never block a suggestion on uncertainty.
+    private static let languageIDMinConfidence = 0.6
+
     /// True when `ghost` looks like English text — a defense-in-depth output gate alongside
     /// the "Write only in English." sentence in `PersonalizationEngine.baseInstruction`.
     /// Gemma is multilingual and nothing else constrains the reply language; dogfooding
     /// surfaced an Italian ghost ("tua disponibilità è molto") when the user's line started
     /// with "La" and the instruction alone wasn't enough to stop it.
     ///
-    /// Heuristic: among the alphabetic characters in `ghost`, more than ~30% falling outside
-    /// plain ASCII a-zA-Z is treated as non-English. That catches Italian/French accents,
-    /// Cyrillic, CJK, etc. — whole non-Latin scripts are ~100% non-ASCII letters, and even a
-    /// short accented phrase ("però è già lì") crosses the 30% bar — while plain English text
-    /// with an occasional accented name or loanword ("café meeting tomorrow") stays well under
-    /// it and passes through untouched. Non-letter characters (digits, punctuation, whitespace)
-    /// don't count on either side of the ratio.
+    /// Two layers:
+    /// 1. Cheap char-ratio pre-filter: among the alphabetic characters in `ghost`, more than
+    ///    ~30% falling outside ASCII a-zA-Z is rejected instantly — catches whole non-Latin
+    ///    scripts (CJK, Cyrillic ≈ 100% non-ASCII letters) and accent-dense Romance phrases
+    ///    without invoking the language recognizer. Plain English with an occasional accented
+    ///    name/loanword ("café meeting tomorrow") stays well under it.
+    /// 2. NLLanguageRecognizer (on-device, fast for short strings) for ghosts of at least
+    ///    `languageIDMinWords` words: reject only when the dominant language is confidently
+    ///    (≥ `languageIDMinConfidence`) something other than English. This catches mostly-ASCII
+    ///    non-English text the ratio misses — the actual dogfooding phrase
+    ///    "tua disponibilità è molto" is only ~9% non-ASCII letters but IDs as Italian at 1.0.
+    ///    A nil/undetermined dominant language, or low confidence, accepts — never block a
+    ///    suggestion on uncertainty.
     ///
     /// NOTE: this hard-codes English-only per the owner's explicit request for now. A future
     /// per-user language setting should replace this blanket gate.
     static func isLikelyEnglish(_ ghost: String) -> Bool {
+        // Layer 1: char-ratio pre-filter.
         var alphabeticCount = 0
         var nonASCIICount = 0
         for ch in ghost where ch.isLetter {
@@ -302,7 +323,17 @@ enum GhostText {
             if !ch.isASCII { nonASCIICount += 1 }
         }
         guard alphabeticCount > 0 else { return true }
-        return Double(nonASCIICount) / Double(alphabeticCount) <= 0.3
+        if Double(nonASCIICount) / Double(alphabeticCount) > 0.3 { return false }
+
+        // Layer 2: language recognizer, only on ghosts long enough to identify reliably.
+        let wordCount = ghost.split(whereSeparator: \.isWhitespace).count
+        guard wordCount >= languageIDMinWords else { return true }
+
+        let recognizer = NLLanguageRecognizer()
+        recognizer.processString(ghost)
+        guard let dominant = recognizer.dominantLanguage, dominant != .english else { return true }
+        let confidence = recognizer.languageHypotheses(withMaximum: 2)[dominant] ?? 0
+        return confidence < languageIDMinConfidence
     }
 
     /// Returns false for ghost text that is clearly junk — would confuse rather than help.

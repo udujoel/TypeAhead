@@ -323,32 +323,56 @@ import Testing
 
     // MARK: - English-only gate (dogfooding: Italian ghost "tua disponibilità è molto")
 
+    @Test func isLikelyEnglishRejectsTheActualDogfoodingPhrase() {
+        // The EXACT phrase from the dogfooding report. Only ~9% of its alphabetic chars are
+        // non-ASCII, so the char-ratio pre-filter alone can't catch it — this is what the
+        // NLLanguageRecognizer layer exists for (it IDs the phrase as Italian at 1.0).
+        #expect(!GhostText.isLikelyEnglish("tua disponibilità è molto"))
+        #expect(!GhostText.isUsableGhost("tua disponibilità è molto"))
+    }
+
     @Test func isLikelyEnglishRejectsItalianAccents() {
+        // Accent-dense Italian (~40% non-ASCII letters) — caught by the char-ratio pre-filter
+        // before the recognizer is even consulted.
         #expect(!GhostText.isLikelyEnglish("però è già lì"))
         #expect(!GhostText.isUsableGhost("però è già lì"))
     }
 
     @Test func isLikelyEnglishAcceptsPlainEnglish() {
+        #expect(GhostText.isLikelyEnglish("check if you have any experience"))
+        #expect(GhostText.isUsableGhost("check if you have any experience"))
         #expect(GhostText.isLikelyEnglish("solutions for real problems"))
         #expect(GhostText.isUsableGhost("solutions for real problems"))
     }
 
     @Test func isLikelyEnglishAcceptsOccasionalAccentedName() {
-        // A loanword/name with one accented character shouldn't tank an otherwise-English ghost.
+        // A loanword/name with one accented character shouldn't tank an otherwise-English
+        // ghost. 3 words, so the recognizer DOES run — it still calls this dominant-English
+        // (en=0.497 vs es=0.100 in probing), so it passes on the dominant-language check.
         #expect(GhostText.isLikelyEnglish("café meeting tomorrow"))
         #expect(GhostText.isUsableGhost("café meeting tomorrow"))
     }
 
+    @Test func isLikelyEnglishAcceptsSingleForeignWord() {
+        // "bonjour" IDs as French (fr=0.632 in probing) but is a single word — under the
+        // 3-word floor, so the recognizer never runs. Deliberate: language ID on 1-2 word
+        // fragments is unreliable (it calls "ting " Norwegian), and a lone borrowed word
+        // inside English prose is normal English usage, not a language switch.
+        #expect(GhostText.isLikelyEnglish("bonjour"))
+        #expect(GhostText.isUsableGhost("bonjour"))
+    }
+
     @Test func isLikelyEnglishRejectsCJK() {
+        // 100% non-ASCII letters — rejected by the char-ratio pre-filter, no recognizer needed
+        // (and no word-count floor: CJK has no spaces, so the recognizer layer wouldn't fire).
         #expect(!GhostText.isLikelyEnglish("こんにちは世界"))
         #expect(!GhostText.isUsableGhost("こんにちは世界"))
     }
 
     @Test func buildFiltersNonEnglishRaw() {
-        // End-to-end: an Italian raw completion (representative of the dogfooding case —
-        // "tua disponibilità è molto" — but with enough accented density to clear the 30%
-        // char-ratio bar) becomes an empty ghost via build().
-        let ghost = GhostText.build(typed: "La ", raw: "però è già lì", isFillInMiddle: true)
+        // End-to-end: the exact Italian raw completion from the dogfooding report becomes an
+        // empty ghost via build().
+        let ghost = GhostText.build(typed: "La ", raw: "tua disponibilità è molto", isFillInMiddle: true)
         #expect(ghost.isEmpty)
     }
 
