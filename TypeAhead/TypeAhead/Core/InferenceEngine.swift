@@ -154,9 +154,12 @@ final class InferenceEngine {
     ///   retry-once-on-unusable-generation flow (`AppDependencies.runCompletion`) calls this a
     ///   second time with a higher temperature (0.8) when the first attempt (default 0.5)
     ///   produced no usable ghost — a different sample from the same distribution is often
-    ///   enough to escape a degenerate '.'/'...'/empty-line output. The KV-cache (WS6) is keyed
-    ///   on the token prefix, not sampling params, so the retry's prefill is still a cache hit —
-    ///   only the (much cheaper) sampling step differs.
+    ///   enough to escape a degenerate '.'/'...'/empty-line output. NOTE: the retry is NOT a
+    ///   cache hit. `box.tokens` after the first attempt is the same length as `newTokens` (the
+    ///   prompt didn't change), so `PromptCacheValidity.decide` returns `.rebuild` for an
+    ///   identical-length sequence — the retry pays a full prefill, same as the first attempt.
+    ///   (WP-5: an earlier version of this comment claimed the retry was a cache hit; it was
+    ///   wrong — see the cache-offset reconciliation below for why that mattered.)
     func complete(
         prompt: String,
         suffix: String = "",
@@ -212,6 +215,40 @@ final class InferenceEngine {
                 let interval = signposter.beginInterval("complete", id: signpostID)
 
                 let stream = try await container.perform { context -> AsyncStream<Generation> in
+                    // WP-5 (P0): reconcile the cache's real offset with box.tokens BEFORE
+                    // deciding reuse-vs-rebuild. MLXLMCommon.generate's TokenIterator.step()
+                    // mutates the cache (advances its offset) on EVERY generated token, but
+                    // box.tokens only ever stores the PROMPT tokens. So after a generation the
+                    // cache physically holds K/V state for (prompt + generated tokens) while
+                    // box.tokens claims just the prompt — a `overflow`-token tail the box
+                    // doesn't know about. If left alone, the next keystroke's `.reuse` decision
+                    // appends fresh deltaTokens on top of a cache still holding the PREVIOUS
+                    // ghost text (and its trailing <end_of_turn>), and the model attends to
+                    // phantom text it never generated for this turn — a wedged end-of-turn
+                    // token is a near-deterministic "emit EOS now" signal, producing an empty
+                    // completion. Trim the overflow (or invalidate if untrimmable) so
+                    // box.tokens and the cache offset agree before `decide` runs. Doing this at
+                    // the START of the call (rather than after streaming) is race-free —
+                    // `container.perform` serializes — and also covers early-break/cancelled
+                    // streams that advanced the cache without box.tokens ever being updated for
+                    // the aborted turn.
+                    if let existingCache = box.kvCache {
+                        let cacheOffset = existingCache.first?.offset ?? 0
+                        let overflow = PromptCacheValidity.cacheOverflow(
+                            cacheOffset: cacheOffset, trackedTokenCount: box.tokens.count)
+                        if overflow > 0 {
+                            if canTrimPromptCache(existingCache) {
+                                let trimmed = trimPromptCache(existingCache, numTokens: overflow)
+                                signposter.emitEvent("cacheTrim", id: signpostID, "overflow=\(overflow) trimmed=\(trimmed)")
+                                logger.info("cache trim: overflow=\(overflow, privacy: .public) trimmed=\(trimmed, privacy: .public)")
+                            } else {
+                                box.invalidate()
+                                signposter.emitEvent("cacheTrimUnavailable", id: signpostID, "overflow=\(overflow)")
+                                logger.info("cache trim unavailable (untrimmable cache type): overflow=\(overflow, privacy: .public), invalidating")
+                            }
+                        }
+                    }
+
                     let newTokens = try context.tokenizer.applyChatTemplate(messages: messages)
                     let decision = PromptCacheValidity.decide(cachedTokens: box.tokens, newTokens: newTokens)
 
@@ -221,10 +258,12 @@ final class InferenceEngine {
                     case .reuse(let deltaTokens) where box.kvCache != nil:
                         inputTokens = deltaTokens
                         cache = box.kvCache!
+                        logger.info("cache decision: reuse deltaTokens=\(deltaTokens.count, privacy: .public) totalTokens=\(newTokens.count, privacy: .public)")
                         signposter.emitEvent("cacheReuse", id: signpostID, "deltaTokens=\(deltaTokens.count) totalTokens=\(newTokens.count)")
                     case .reuse, .rebuild:
                         inputTokens = newTokens
                         cache = context.model.newCache(parameters: params)
+                        logger.info("cache decision: rebuild totalTokens=\(newTokens.count, privacy: .public)")
                         signposter.emitEvent("cacheRebuild", id: signpostID, "totalTokens=\(newTokens.count)")
                     }
 

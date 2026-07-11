@@ -57,4 +57,26 @@ struct PromptCacheValidityTests {
         let decision = PromptCacheValidity.decide(cachedTokens: [1, 2, 3], newTokens: [])
         #expect(decision == .rebuild)
     }
+
+    // MARK: - cacheOverflow (WP-5 cache-offset reconciliation)
+
+    @Test("cache offset equal to tracked tokens -> no overflow")
+    func cacheOverflowZeroWhenInSync() {
+        #expect(PromptCacheValidity.cacheOverflow(cacheOffset: 10, trackedTokenCount: 10) == 0)
+    }
+
+    @Test("cache offset ahead of tracked tokens (post-generation tail) -> overflow is the delta")
+    func cacheOverflowPositiveAfterGeneration() {
+        #expect(PromptCacheValidity.cacheOverflow(cacheOffset: 15, trackedTokenCount: 10) == 5)
+    }
+
+    @Test("cache offset behind tracked tokens -> clamped to zero, nothing to trim")
+    func cacheOverflowClampedWhenCacheBehind() {
+        #expect(PromptCacheValidity.cacheOverflow(cacheOffset: 5, trackedTokenCount: 10) == 0)
+    }
+
+    @Test("no cache yet (offset 0) and no tracked tokens -> zero overflow")
+    func cacheOverflowZeroWhenEmpty() {
+        #expect(PromptCacheValidity.cacheOverflow(cacheOffset: 0, trackedTokenCount: 0) == 0)
+    }
 }
