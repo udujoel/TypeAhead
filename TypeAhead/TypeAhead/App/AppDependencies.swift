@@ -405,18 +405,22 @@ final class AppDependencies {
         // newline it shouldn't see.
         let mirrorTypedText = context.textBeforeCursor
 
-        // WP-B retry-once (item 3): snapshot the pipeline's fire counter now, before any
-        // inference starts. `CompletionPipeline.fire()` increments this on every debounce/
-        // max-wait fire — including the one that's running THIS cycle — so if it's still equal
-        // to this snapshot when a generation completes, no newer keystroke has started a
-        // fresher cycle in the meantime. Combined with `focusEpoch.mayAccept`, this is the
-        // staleness guard the retry checks before re-firing: either signal moving means abort,
-        // never retry. (A newer keystroke during attempt 0 would also have called
-        // `inferenceEngine.complete` again directly, which cancels `currentTask` — cancellation
-        // already skips `onComplete` entirely, per `InferenceEngine.complete`'s `if
-        // !Task.isCancelled { onComplete() }` — so the counter check below is belt-and-suspenders
-        // for the case where attempt 0 finishes just as a new cycle is about to fire.)
-        let cycleFireCount = completionPipeline.inferenceCallCount
+        // WP-2 stale-paint guard / WP-B retry-once (item 3): snapshot the pipeline's validity
+        // token now, before any inference starts. `CompletionPipeline.cycleValidityToken`
+        // increments on every debounce/max-wait `fire()` (a newer keystroke started a fresher
+        // cycle) AND on every `cancel()` (a correction key — backspace/arrows — invalidated this
+        // cycle without starting a new one, see `cycleValidityToken`'s doc comment for the
+        // "heelp" bug this closes) — so if it's still equal to this snapshot when a paint or a
+        // completion arrives, nothing has happened since that would make this generation stale.
+        // Combined with `focusEpoch.mayAccept`, this is the staleness guard BOTH the paint path
+        // (`onUpdate` below) and the retry path (`onComplete` below) check before painting/
+        // re-firing: either signal moving means abort. (A newer keystroke during attempt 0 would
+        // also have called `inferenceEngine.complete` again directly, which cancels `currentTask`
+        // — cancellation already skips `onComplete` entirely, per `InferenceEngine.complete`'s `if
+        // !Task.isCancelled { onComplete() }` — but `onUpdate` closures already scheduled onto the
+        // main actor run regardless of cancellation, which is exactly the "heelp" mechanism: the
+        // counter check below is what actually stops those late paints.)
+        let cycleValidityToken = completionPipeline.cycleValidityToken
 
         func runInference(temperature: Float, attempt: Int) {
             // Tracks whether this attempt ever produced a usable ghost (a non-empty `full` —
@@ -442,6 +446,15 @@ final class AppDependencies {
                     // already hid the overlay). This callback was scheduled before that and would
                     // otherwise re-show the prior field's suggestion in the new one. Drop it.
                     guard focusEpoch.mayAccept(stampedEpoch: generationEpoch) else { return }
+                    // "heelp" bug (WP-2): this `onUpdate` Task was already hopping to the main
+                    // actor when a superseding keystroke landed — cancellation of the underlying
+                    // model task doesn't stop a hop already in flight. Without this guard, a late
+                    // paint from a cycle the user has since typed past (or corrected away with
+                    // backspace) could land AFTER the newer keystroke, producing exactly the
+                    // dogfooding bug: ghost text painted onto a field that no longer matches the
+                    // prompt it was generated for, then Tab-accepted into garbage ("heelp"). The
+                    // retry path below already had this guard; the paint path did not.
+                    guard completionPipeline.cycleValidityToken == cycleValidityToken else { return }
                     let firstPaint = overlayController.showOrUpdateML(
                         ghost: full,
                         epoch: generationEpoch,
@@ -475,11 +488,11 @@ final class AppDependencies {
                     guard CompletionCoordinator.shouldRetryGeneration(
                         attempt: attempt, producedUsableGhost: outcome.producedUsableGhost
                     ) else { return }
-                    // Staleness guards — see the comment on `cycleFireCount` above: abort the
-                    // retry if focus moved on, or a newer keystroke already started a fresher
-                    // cycle, since either means this prompt is no longer relevant.
+                    // Staleness guards — see the comment on `cycleValidityToken` above: abort the
+                    // retry if focus moved on, or a newer keystroke/correction-key already
+                    // invalidated this cycle, since either means this prompt is no longer relevant.
                     guard focusEpoch.mayAccept(stampedEpoch: generationEpoch) else { return }
-                    guard completionPipeline.inferenceCallCount == cycleFireCount else { return }
+                    guard completionPipeline.cycleValidityToken == cycleValidityToken else { return }
                     // No user text logged — matches the rest of this file's privacy discipline.
                     logger.info("retrying generation: attempt 0 produced no usable ghost, retrying at temperature=0.8")
                     runInference(temperature: 0.8, attempt: 1)

@@ -16,6 +16,24 @@ final class CompletionPipeline {
     var isEnabled: Bool
 
     private(set) var inferenceCallCount = 0
+
+    /// Monotonic counter that changes on ANY event that invalidates the "current" generation
+    /// cycle — both a fresh debounce/max-wait `fire()` AND a correction-key `cancel()` (backspace/
+    /// arrows — see `AppDelegate.onKeystroke`). Distinct from `inferenceCallCount` (which counts
+    /// only *actual* inference calls): `cancel()` doesn't start a new inference call, but it DOES
+    /// mean any `onUpdate`/`onComplete` callback still in flight from the cycle that was running
+    /// when the correction key landed must not paint or retry.
+    ///
+    /// WP-2 "heelp" bug: a backspace hides the overlay (`OverlayController.handleKeystroke`
+    /// diverges) and calls `cancel()`, but `cancel()` only stops a *pending debounce* — it does
+    /// NOT cancel an already in-flight `InferenceEngine.complete` task, and even when
+    /// `inferenceCallCount == inferenceCallCount` still held afterwards, `onUpdate`'s Task had
+    /// already been scheduled onto the main actor and executes anyway once it gets its turn. Since
+    /// `keystrokeReceived()` (which DOES bump `inferenceCallCount`) is deliberately NOT called for
+    /// correction keys, `inferenceCallCount` alone can't detect this case — this second counter
+    /// closes that gap.
+    private(set) var cycleValidityToken = 0
+
     private let inferenceAction: @Sendable () async -> Void
 
     init(
@@ -55,13 +73,21 @@ final class CompletionPipeline {
     private func fire() {
         lastFire = Date()
         inferenceCallCount += 1
+        cycleValidityToken += 1
         let action = inferenceAction
         Task { await action() }
     }
 
+    /// Cancels a pending debounce (correction keys — see `AppDelegate.onKeystroke`'s
+    /// `correctionKeyCodes` branch). Bumps `cycleValidityToken` unconditionally, whether or not a
+    /// debounce was actually pending: a correction key always means "whatever generation cycle was
+    /// running is no longer relevant to what's on screen," even if that cycle is already past the
+    /// debounce stage and mid-inference (`cancel()` can't reach into `InferenceEngine` to stop it —
+    /// see `cycleValidityToken`'s doc comment).
     func cancel() {
         debounceTask?.cancel()
         debounceTask = nil
+        cycleValidityToken += 1
     }
 
     static func mock(
