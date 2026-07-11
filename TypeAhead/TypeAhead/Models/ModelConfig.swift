@@ -18,7 +18,12 @@ struct ModelConfig: Identifiable, Equatable, Sendable {
         huggingFaceRepo: "mlx-community/gemma-4-e2b-it-4bit",
         fileSizeGB: 3.2,
         minRAMGB: 8,
-        recommendedForRAMGB: 16...31
+        // WP-5 (P1): widened from 16...31. E4B costs ~2x per-token and ~8s longer load for
+        // marginal quality gain in a latency-sensitive typeahead — recommending it on 32GB+
+        // machines pushed the slower model on exactly the users who'd notice completion lag
+        // most. E2B is now recommended across the whole 16GB+ range; E4B stays user-selectable
+        // (see `.all` below and its updated description) but is no longer auto-recommended.
+        recommendedForRAMGB: 16...Int.max
     )
     static let gemma4E4B = ModelConfig(
         id: "gemma-4-e4b-it-4bit",
@@ -26,7 +31,10 @@ struct ModelConfig: Identifiable, Equatable, Sendable {
         huggingFaceRepo: "mlx-community/gemma-4-e4b-it-4bit",
         fileSizeGB: 6.2,
         minRAMGB: 16,
-        recommendedForRAMGB: 32...Int.max
+        // WP-5 (P1): intentionally never matches a real RAM reading (always positive) so this
+        // model is never the `recommended(availableRAMGB:)` pick — kept in `.all` so it remains
+        // user-selectable in Settings. See gemma4E2B's comment above for why.
+        recommendedForRAMGB: -1...(-1)
     )
     static let gemma3_4B = ModelConfig(
         id: "gemma-3-4b-it-4bit",

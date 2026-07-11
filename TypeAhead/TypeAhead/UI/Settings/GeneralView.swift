@@ -119,6 +119,14 @@ private struct ModelRow: View {
                 Text(String(format: "%.1f GB  ·  %d GB RAM minimum", config.fileSizeGB, config.minRAMGB))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                // WP-5 (P1): E4B is no longer auto-recommended (see ModelConfig.gemma4E4B) — it
+                // costs ~2x per-token vs E2B, which matters for a latency-sensitive typeahead.
+                // Still user-selectable; this just sets expectations for who should pick it.
+                if config.id == ModelConfig.gemma4E4B.id {
+                    Text("Higher quality, slower — best on M-series Pro/Max")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer()
