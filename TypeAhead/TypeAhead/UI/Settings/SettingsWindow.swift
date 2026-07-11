@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum SettingsSection: String, CaseIterable, Identifiable {
@@ -44,16 +45,34 @@ struct SettingsWindow: View {
 
     var body: some View {
         NavigationSplitView {
-            List(SettingsSection.allCases, selection: $selectedSection) { section in
-                HStack(spacing: 10) {
-                    Image(systemName: section.icon)
-                        .foregroundStyle(section.iconColor)
-                        .frame(width: 20)
-                    Text(section.label)
+            // The Quit button lives in this VStack (not inside the List) so it stays pinned at
+            // the bottom of the sidebar column regardless of which pane is selected — the
+            // Settings window is the guaranteed-reachable surface (it opens at launch), so this
+            // is the one place a "just stop the app" affordance is always visible even if the
+            // menu-bar icon itself is hidden or its scene has died.
+            VStack(spacing: 0) {
+                List(SettingsSection.allCases, selection: $selectedSection) { section in
+                    HStack(spacing: 10) {
+                        Image(systemName: section.icon)
+                            .foregroundStyle(section.iconColor)
+                            .frame(width: 20)
+                        Text(section.label)
+                    }
+                    .tag(section)
                 }
-                .tag(section)
+                .listStyle(.sidebar)
+
+                Divider()
+
+                Button("Quit TypeAhead") {
+                    NSApp.terminate(nil)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .foregroundStyle(.secondary)
+                .padding(10)
+                .frame(maxWidth: .infinity)
             }
-            .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 180, ideal: 190)
         } detail: {
             Group {
