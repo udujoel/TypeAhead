@@ -196,7 +196,32 @@ import Testing
     @Test func baseInstructionKeepsExistingStyleAndNoRepetitionWording() {
         let instruction = PersonalizationEngine.baseInstruction(targetWords: 4)
         #expect(instruction.contains("matching their wording and style"))
-        #expect(instruction.contains("Do not repeat what they already wrote"))
+        // Softened by WP-6 from "Do not repeat what they already wrote" — the old wording read
+        // as forbidding the model from finishing an in-progress word, which conflicts with the
+        // new mid-word-completion sentence below.
+        #expect(instruction.contains("Do not repeat words they already completed"))
         #expect(instruction.contains("do not add quotes, labels, or explanations"))
+    }
+
+    // MARK: - baseInstruction mid-word completion (WP-6)
+
+    @Test func baseInstructionIncludesMidWordCompletionRule() {
+        let instruction = PersonalizationEngine.baseInstruction(targetWords: 4)
+        #expect(instruction.contains("middle of a word"))
+        #expect(instruction.contains("no space before them"))
+    }
+
+    @Test func buildInstructionWithNoPersonaOrSuffixIsByteIdenticalToBase() {
+        // Cache-stability invariant: the instruction must be byte-identical every cycle when
+        // there's no persona/suffix — no per-keystroke dynamic mid-word text may have crept in,
+        // or the WS6 KV-cache would rebuild on every keystroke instead of reusing.
+        let instruction = PersonalizationEngine.buildInstruction(personaNote: nil, suffix: "", targetWords: 4)
+        #expect(instruction == PersonalizationEngine.baseInstruction(targetWords: 4))
+    }
+
+    @Test func buildInstructionIsDeterministicAcrossRepeatedCalls() {
+        let first = PersonalizationEngine.buildInstruction(personaNote: nil, suffix: "", targetWords: 4)
+        let second = PersonalizationEngine.buildInstruction(personaNote: nil, suffix: "", targetWords: 4)
+        #expect(first == second)
     }
 }

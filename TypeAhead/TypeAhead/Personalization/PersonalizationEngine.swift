@@ -47,6 +47,14 @@ final class PersonalizationEngine {
     /// explicit word-count target and an outright ban on punctuation-only/empty replies, so a
     /// suggestion is expected on every cycle, not just the ones where the model felt like it.
     ///
+    /// WP-6 (mid-word completion): added the "middle of a word" sentence so the model completes
+    /// a word the user is still typing ("he" -> "lp") instead of always jumping ahead to a new
+    /// word. This is STATIC text, not the actual partial word — the instruction is the FIRST
+    /// part of the prompt token sequence the KV-cache (WS6, see PromptCacheValidity) is keyed
+    /// on, so embedding per-keystroke dynamic text here (e.g. "complete 'he'") would change
+    /// token 0 on every keystroke and force a full cache rebuild every cycle, defeating cache
+    /// reuse entirely. A fixed sentence, byte-identical every cycle, keeps the cache warm.
+    ///
     /// - Parameter targetWords: the user's configured completion length
     ///   (`settings.completionLength.maxWords`) — the model is told to produce between 2 and
     ///   this many words. Threaded in by `InferenceEngine.complete` as its own `maxWords`
@@ -54,10 +62,12 @@ final class PersonalizationEngine {
     ///   the instruction and the display cap always agree.
     nonisolated static func baseInstruction(targetWords: Int) -> String {
         "Continue the text the user is writing. Always continue with at least 2 and at most "
-        + "\(targetWords) words that come naturally, matching their wording and style. Write "
-        + "only in English. Never reply with only punctuation, an ellipsis, or an empty line — "
-        + "always predict the most likely next words. Do not repeat what they already wrote, "
-        + "and do not add quotes, labels, or explanations."
+        + "\(targetWords) words that come naturally, matching their wording and style. If the "
+        + "text ends in the middle of a word, first finish that exact word (output only its "
+        + "remaining letters, with no space before them), then continue with the following "
+        + "words. Write only in English. Never reply with only punctuation, an ellipsis, or an "
+        + "empty line — always predict the most likely next words. Do not repeat words they "
+        + "already completed, and do not add quotes, labels, or explanations."
     }
 
     /// Defensive re-cap for the suffix hint appended to the instruction. `ContextBuilder.buildSuffix`
