@@ -442,12 +442,25 @@ final class AppDependencies {
             // share this one flag across the same generation.
             let outcome = GenerationOutcome()
 
+            // WP-8: on the retry (attempt 1), strip the prompt scaffolding — no persona note,
+            // no suffix hint in the INSTRUCTION — leaving just the bare `baseInstruction`. The
+            // remaining empty-generation cases post-cache-fix correlate with prompt-scaffolding
+            // confusion in this small a model rather than an unlucky sample; temperature alone
+            // had a poor retry hit rate in dogfooding logs, so give the retry a shorter, more
+            // direct instruction instead. This only touches the INSTRUCTION — `suffix` itself is
+            // still passed through unchanged below, so the output-side overlap trim
+            // (`GhostText.build`'s `suffix` param, via `InferenceEngine.ghostText`) keeps using
+            // the real suffix even on retry; we're dropping the suffix from the prompt, not from
+            // output hygiene. The retry already pays a full prefill regardless (see `complete`'s
+            // doc comment on `temperature`), so a different instruction adds no extra cache cost.
+            let isRetry = attempt > 0
             inferenceEngine.complete(
                 prompt: prompt,
                 suffix: suffix,
                 maxTokens: settings.completionLength.maxTokens,
                 maxWords: settings.completionLength.maxWords,
-                personaNote: personaNote,
+                personaNote: isRetry ? nil : personaNote,
+                instructionSuffix: isRetry ? "" : suffix,
                 temperature: temperature
             ) { [weak self] full in
                 // Called on the model executor — hop to main to touch UI.
