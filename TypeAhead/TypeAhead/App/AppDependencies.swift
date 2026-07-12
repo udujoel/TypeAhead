@@ -512,6 +512,56 @@ final class AppDependencies {
             }
         }
 
+        // WP-7: instant dictionary-based ghost for the word the user is mid-typing, shown
+        // through the SAME showOrUpdateML(...) call the ML streaming path uses below — a
+        // dictionary word-completion ghost is semantically identical to an ML ghost that
+        // continues the current word (no leading space, Tab appends via .acceptWord,
+        // type-through advances it, divergence hides it), so there is no new overlay mode
+        // here, just an instant source for the existing one. The ML generation started by
+        // runInference() below then replaces this ghost in place, through the same
+        // update-in-place branch of showOrUpdateML, the moment its first token lands.
+        //
+        // Placed here (after every gate above: policy, placement suppress,
+        // shouldRunInference, the 8-char minimum, and shouldAttemptCompletion) so the
+        // instant ghost respects every precondition the ML path respects — it never shows
+        // where the ML path wouldn't have attempted anyway. It's also synchronous, with no
+        // `await` between here and the show call, so the cycleValidityToken/focusEpoch
+        // staleness guards the ML paint path needs (see the comment on `cycleValidityToken`
+        // above) don't apply to it — nothing can invalidate this cycle between the gate
+        // checks above and this show call.
+        //
+        // Mutual exclusion with spell-correction (verified): TypoDetector.correction only
+        // fires for a trailing word that is NOT a prefix of any valid dictionary word
+        // (isPrefixOfValidWord guard) — so any word for which WordCompleter here finds a
+        // completion is, by construction, exactly the case spellFix above would have
+        // returned nil for. They can't both fire for the same cursor position. And by
+        // this point in the function, both the .spell and .emoji cases above have already
+        // `return`ed if they matched — this line is unreached unless CompletionCoordinator
+        // .selectFastPath picked neither.
+        let partial = ContextBuilder.currentWord(context: context)
+        if WordCompleter.shouldOfferInstantCompletion(partial: partial),
+           let suffix = WordCompleter.completionSuffix(forPartial: partial!),
+           GhostText.isUsableGhost(suffix) {
+            let firstPaint = overlayController.showOrUpdateML(
+                ghost: suffix,
+                epoch: generationEpoch,
+                cursorRect: cursorRect,
+                fontSize: fontSize,
+                presentation: placement.presentation,
+                tier: placement.tier,
+                textBeforeCursor: mirrorTypedText
+            )
+            if firstPaint {
+                recordSuggestionEvent(
+                    kind: .shown,
+                    promptTail: promptTail,
+                    ghostText: suffix,
+                    latencyMs: Date().timeIntervalSince(generationStart) * 1000,
+                    metadata: "dict,tier=\(placement.tier.rawValue)"
+                )
+            }
+        }
+
         runInference(temperature: 0.5, attempt: 0)
     }
 }
