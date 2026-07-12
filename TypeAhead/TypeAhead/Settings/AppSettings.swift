@@ -83,7 +83,7 @@ final class AppSettings {
     init() {
         let d = UserDefaults.standard
         completionsEnabled    = d.object(forKey: Keys.completionsEnabled)    as? Bool   ?? true
-        completionDelay       = d.object(forKey: Keys.completionDelay)       as? Double ?? 0.18
+        completionDelay       = d.object(forKey: Keys.completionDelay)       as? Double ?? 0.12
         completionLength      = CompletionLength(rawValue: d.string(forKey: Keys.completionLength) ?? "") ?? .medium
         activeModelID         = d.string(forKey: Keys.activeModelID) ?? ModelConfig.defaultModel.id
         showInAllApps         = d.object(forKey: Keys.showInAllApps)         as? Bool   ?? true
@@ -113,6 +113,16 @@ final class AppSettings {
         if !d.bool(forKey: "didMigrateDelay_v3") {
             if completionDelay >= 0.25 { completionDelay = 0.18 }
             d.set(true, forKey: "didMigrateDelay_v3")
+        }
+
+        // WP-8: with the KV-cache reuse bug fixed, a mid-typing fire is a cheap delta
+        // prefill rather than a full rebuild, so a snappier default cadence is safe. v4
+        // brings existing users down off the old 0.18 default region to 0.12 — but only
+        // if they never deliberately raised it past that region (mirrors v3's ">= threshold"
+        // condition above, which only touched users still sitting at/above the OLD default).
+        if !d.bool(forKey: "didMigrateDelay_v4") {
+            if completionDelay >= 0.15 { completionDelay = 0.12 }
+            d.set(true, forKey: "didMigrateDelay_v4")
         }
 
         // One-time pre-seed: disable completions by default in password managers/finance

@@ -6,7 +6,7 @@ import Testing
     @Test func defaultsAreCorrect() {
         let settings = AppSettings()
         #expect(settings.completionsEnabled == true)
-        #expect(settings.completionDelay == 0.18)
+        #expect(settings.completionDelay == 0.12)
         #expect(settings.completionLength == .medium)
         #expect(settings.activeModelID == ModelConfig.defaultModel.id)
         #expect(settings.showInAllApps == true)
