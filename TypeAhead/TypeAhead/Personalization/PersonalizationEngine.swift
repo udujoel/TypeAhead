@@ -59,10 +59,17 @@ final class PersonalizationEngine {
     ///   (`settings.completionLength.maxWords`) — the model is told to produce between 2 and
     ///   this many words. Threaded in by `InferenceEngine.complete` as its own `maxWords`
     ///   parameter (the same value that later clamps the displayed ghost via `GhostText`), so
-    ///   the instruction and the display cap always agree.
+    ///   the instruction and the display cap always agree. `targetWords < 2` (i.e.
+    ///   `CompletionLength.short`, maxWords == 1) gets its own sentence — "at least 2 and at
+    ///   most 1 words" is self-contradictory — while every other value keeps the exact
+    ///   byte-identical range sentence.
     nonisolated static func baseInstruction(targetWords: Int) -> String {
-        "Continue the text the user is writing. Always continue with at least 2 and at most "
-        + "\(targetWords) words that come naturally, matching their wording and style. If the "
+        let lengthSentence = targetWords < 2
+            ? "Always continue with exactly one word that comes naturally, matching their "
+            + "wording and style."
+            : "Always continue with at least 2 and at most \(targetWords) words that come "
+            + "naturally, matching their wording and style."
+        return "Continue the text the user is writing. " + lengthSentence + " If the "
         + "text ends in the middle of a word, first finish that exact word (output only its "
         + "remaining letters, with no space before them), then continue with the following "
         + "words. Write only in English. Never reply with only punctuation, an ellipsis, or an "
