@@ -198,6 +198,27 @@ final class AppDependencies {
         // leftover spell/emoji mode can't still be showing.
         let cycleEpoch = focusEpoch.epoch
 
+        // WP-2 stale-paint guard / WP-B retry-once (item 3): snapshot the pipeline's validity
+        // token now, at cycle start — before the `await ScreenshotContextProvider
+        // .captureAndExtractText()` / `personalizationEngine.examples(...)` awaits further down,
+        // so a correction key (backspace/arrows) landing DURING those awaits is caught too, not
+        // just one that lands after inference starts. `CompletionPipeline.cycleValidityToken`
+        // increments on every debounce/max-wait `fire()` (a newer keystroke started a fresher
+        // cycle) AND on every `cancel()` (a correction key invalidated this cycle without
+        // starting a new one, see `cycleValidityToken`'s doc comment for the "heelp" bug this
+        // closes) — so if it's still equal to this snapshot when a paint or a completion arrives,
+        // nothing has happened since that would make this generation stale. Combined with
+        // `focusEpoch.mayAccept`, this is the staleness guard the instant-dictionary paint, the
+        // ML paint path (`onUpdate` below), and the retry path (`onComplete` below) all check
+        // before painting/re-firing: either signal moving means abort. (A newer keystroke during
+        // attempt 0 would also have called `inferenceEngine.complete` again directly, which
+        // cancels `currentTask` — cancellation already skips `onComplete` entirely, per
+        // `InferenceEngine.complete`'s `if !Task.isCancelled { onComplete() }` — but `onUpdate`
+        // closures already scheduled onto the main actor run regardless of cancellation, which is
+        // exactly the "heelp" mechanism: the counter check below is what actually stops those
+        // late paints.)
+        let cycleValidityToken = completionPipeline.cycleValidityToken
+
         // Read the text around the cursor. Prefer the Accessibility API (full
         // field contents); fall back to the keystroke buffer for apps where AX
         // is unavailable (e.g. some Electron apps).
@@ -417,23 +438,6 @@ final class AppDependencies {
         // newline it shouldn't see.
         let mirrorTypedText = context.textBeforeCursor
 
-        // WP-2 stale-paint guard / WP-B retry-once (item 3): snapshot the pipeline's validity
-        // token now, before any inference starts. `CompletionPipeline.cycleValidityToken`
-        // increments on every debounce/max-wait `fire()` (a newer keystroke started a fresher
-        // cycle) AND on every `cancel()` (a correction key — backspace/arrows — invalidated this
-        // cycle without starting a new one, see `cycleValidityToken`'s doc comment for the
-        // "heelp" bug this closes) — so if it's still equal to this snapshot when a paint or a
-        // completion arrives, nothing has happened since that would make this generation stale.
-        // Combined with `focusEpoch.mayAccept`, this is the staleness guard BOTH the paint path
-        // (`onUpdate` below) and the retry path (`onComplete` below) check before painting/
-        // re-firing: either signal moving means abort. (A newer keystroke during attempt 0 would
-        // also have called `inferenceEngine.complete` again directly, which cancels `currentTask`
-        // — cancellation already skips `onComplete` entirely, per `InferenceEngine.complete`'s `if
-        // !Task.isCancelled { onComplete() }` — but `onUpdate` closures already scheduled onto the
-        // main actor run regardless of cancellation, which is exactly the "heelp" mechanism: the
-        // counter check below is what actually stops those late paints.)
-        let cycleValidityToken = completionPipeline.cycleValidityToken
-
         func runInference(temperature: Float, attempt: Int) {
             // Tracks whether this attempt ever produced a usable ghost (a non-empty `full` —
             // InferenceEngine.ghostText/GhostText.build already collapses junk output to "").
@@ -537,11 +541,12 @@ final class AppDependencies {
         // Placed here (after every gate above: policy, placement suppress,
         // shouldRunInference, the 8-char minimum, and shouldAttemptCompletion) so the
         // instant ghost respects every precondition the ML path respects — it never shows
-        // where the ML path wouldn't have attempted anyway. It's also synchronous, with no
-        // `await` between here and the show call, so the cycleValidityToken/focusEpoch
-        // staleness guards the ML paint path needs (see the comment on `cycleValidityToken`
-        // above) don't apply to it — nothing can invalidate this cycle between the gate
-        // checks above and this show call.
+        // where the ML path wouldn't have attempted anyway. It runs AFTER the
+        // `ScreenshotContextProvider.captureAndExtractText()` / `personalizationEngine
+        // .examples(...)` awaits above, so a focus change (or a correction key) landing during
+        // those awaits is a real hazard here too, not just for the ML paint path below — hence
+        // the same two staleness guards, checked against the values snapshotted at cycle start
+        // (see the comment on `cycleValidityToken` up top).
         //
         // Mutual exclusion with spell-correction (verified): TypoDetector.correction only
         // fires for a trailing word that is NOT a prefix of any valid dictionary word
@@ -551,9 +556,11 @@ final class AppDependencies {
         // this point in the function, both the .spell and .emoji cases above have already
         // `return`ed if they matched — this line is unreached unless CompletionCoordinator
         // .selectFastPath picked neither.
-        let partial = ContextBuilder.currentWord(context: context)
-        if WordCompleter.shouldOfferInstantCompletion(partial: partial),
-           let suffix = WordCompleter.completionSuffix(forPartial: partial!),
+        guard focusEpoch.mayAccept(stampedEpoch: generationEpoch) else { return }
+        guard completionPipeline.cycleValidityToken == cycleValidityToken else { return }
+        if let partial = ContextBuilder.currentWord(context: context),
+           WordCompleter.shouldOfferInstantCompletion(partial: partial),
+           let suffix = WordCompleter.completionSuffix(forPartial: partial),
            GhostText.isUsableGhost(suffix) {
             let firstPaint = overlayController.showOrUpdateML(
                 ghost: suffix,
