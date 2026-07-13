@@ -30,8 +30,11 @@ import Testing
     }
 
     @Test func modelForRAMNeverRecommendsGemma4E4B() {
-        for ram in [8, 16, 24, 32, 64, 128] {
-            #expect(ModelConfig.recommended(availableRAMGB: ram).id != "gemma-4-e4b-it-4bit")
+        // 8GB is low-memory territory (see modelForRAMPicksQwenOnLowMemory) — only assert it
+        // avoids E4B here. 16GB+ all land on the specific E2B recommendation (WP-5 P1).
+        #expect(ModelConfig.recommended(availableRAMGB: 8).id != "gemma-4-e4b-it-4bit")
+        for ram in [16, 24, 32, 64, 128] {
+            #expect(ModelConfig.recommended(availableRAMGB: ram).id == "gemma-4-e2b-it-4bit")
         }
     }
 

@@ -176,8 +176,14 @@ import Testing
 
     @Test func baseInstructionIncludesTargetWordCount() {
         #expect(PersonalizationEngine.baseInstruction(targetWords: 4).contains("at least 2 and at most 4 words"))
-        #expect(PersonalizationEngine.baseInstruction(targetWords: 1).contains("at least 2 and at most 1 words"))
         #expect(PersonalizationEngine.baseInstruction(targetWords: 20).contains("at least 2 and at most 20 words"))
+    }
+
+    // targetWords < 2 (CompletionLength.short, maxWords == 1) must not render the
+    // self-contradictory "at least 2 and at most 1 words" — it gets its own single-word sentence.
+    @Test func baseInstructionSingleWordCaseAvoidsContradiction() {
+        #expect(!PersonalizationEngine.baseInstruction(targetWords: 1).contains("at least 2"))
+        #expect(PersonalizationEngine.baseInstruction(targetWords: 4).contains("at least 2 and at most 4 words"))
     }
 
     @Test func baseInstructionRequiresEnglish() {
