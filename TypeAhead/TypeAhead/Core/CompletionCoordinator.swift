@@ -61,11 +61,43 @@ enum CompletionCoordinator {
     /// cycle. A `.suppress` placement means the ghost can never paint (`OverlayController` would
     /// no-op every streamed token), so starting an MLX generation would burn battery/latency for
     /// nothing — `runCompletion` early-returns instead, BEFORE building the prompt or calling
-    /// `inferenceEngine.complete`. `.inline` and `.pinnedBar` both proceed. The spell/emoji fast
+    /// `inferenceEngine.complete`. `.inline` and `.mirror` both proceed. The spell/emoji fast
     /// paths don't consult this: they have no inference cost, and their suppress handling (no-op
     /// show + `placementSuppressed` telemetry inside `OverlayController`) already short-circuits.
     static func shouldRunInference(presentation: PlacementPresentation) -> Bool {
         presentation != .suppress
+    }
+
+    // MARK: - Second-word gating (WP-B: aggressive, persistent suggestions)
+
+    /// Whether a completion cycle should attempt inference at all, given the text before the
+    /// cursor. Replaces the old `ContextBuilder.shouldSuppressAtSentenceEnd` guard in
+    /// `runCompletion` — that guard suppressed completions right after `.`/`!`/`?`, so a
+    /// generation never even attempted at a sentence end. The owner wants the opposite:
+    /// suggestions "always predict... from the second word", including at sentence ends (the
+    /// model can start the next sentence — the firmer `PersonalizationEngine.buildInstruction`
+    /// wording now supports that).
+    ///
+    /// True iff `textBeforeCursor` contains at least 2 whitespace-separated tokens that each
+    /// contain a letter or digit — pure punctuation tokens (a lone "-" or "..." left over after
+    /// splitting on whitespace) don't count as a "word" for this purpose. `ContextBuilder.
+    /// shouldSuppressAtSentenceEnd` itself is left in place (function + tests) — retained for
+    /// possible future per-app policy use — but `runCompletion` no longer calls it.
+    static func shouldAttemptCompletion(textBeforeCursor: String) -> Bool {
+        let wordTokens = textBeforeCursor
+            .split(whereSeparator: { $0.isWhitespace })
+            .filter { $0.contains(where: { $0.isLetter || $0.isNumber }) }
+        return wordTokens.count >= 2
+    }
+
+    // MARK: - Retry-once on unusable generation (WP-B)
+
+    /// Whether `runCompletion` should re-run the same prompt (at a higher temperature) after a
+    /// generation completed but produced no usable ghost. True only on the very first attempt
+    /// (`attempt == 0`) when nothing usable came out — never on the retry itself, so this can
+    /// never recurse more than once regardless of how many times a caller asks.
+    static func shouldRetryGeneration(attempt: Int, producedUsableGhost: Bool) -> Bool {
+        attempt == 0 && !producedUsableGhost
     }
 
     // MARK: - Screen-context cache TTL

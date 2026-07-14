@@ -127,33 +127,33 @@ import Testing
     // MARK: - PersonalizationEngine.buildInstruction (delegates from InferenceEngine)
 
     @Test func buildInstructionWithNilPersonaNoteUsesBase() {
-        let instruction = PersonalizationEngine.buildInstruction(personaNote: nil)
-        #expect(instruction == PersonalizationEngine.baseInstruction)
+        let instruction = PersonalizationEngine.buildInstruction(personaNote: nil, targetWords: 4)
+        #expect(instruction == PersonalizationEngine.baseInstruction(targetWords: 4))
     }
 
     @Test func buildInstructionWithEmptyPersonaNoteUsesBase() {
-        let instruction = PersonalizationEngine.buildInstruction(personaNote: "")
-        #expect(instruction == PersonalizationEngine.baseInstruction)
+        let instruction = PersonalizationEngine.buildInstruction(personaNote: "", targetWords: 4)
+        #expect(instruction == PersonalizationEngine.baseInstruction(targetWords: 4))
     }
 
     @Test func buildInstructionPrependsPersonaNote() {
-        let instruction = PersonalizationEngine.buildInstruction(personaNote: "Medical context.")
+        let instruction = PersonalizationEngine.buildInstruction(personaNote: "Medical context.", targetWords: 4)
         #expect(instruction.hasPrefix("Medical context."))
-        #expect(instruction.contains(PersonalizationEngine.baseInstruction))
+        #expect(instruction.contains(PersonalizationEngine.baseInstruction(targetWords: 4)))
     }
 
     // MARK: - buildInstruction suffix hint (WS4: real suffix awareness)
 
     @Test func buildInstructionWithEmptySuffixIsByteIdenticalToNoSuffix() {
-        let withDefault = PersonalizationEngine.buildInstruction(personaNote: "note")
-        let withEmptyArg = PersonalizationEngine.buildInstruction(personaNote: "note", suffix: "")
+        let withDefault = PersonalizationEngine.buildInstruction(personaNote: "note", targetWords: 4)
+        let withEmptyArg = PersonalizationEngine.buildInstruction(personaNote: "note", suffix: "", targetWords: 4)
         #expect(withDefault == withEmptyArg)
-        #expect(withDefault == "note\n\n\(PersonalizationEngine.baseInstruction)")
+        #expect(withDefault == "note\n\n\(PersonalizationEngine.baseInstruction(targetWords: 4))")
     }
 
     @Test func buildInstructionWithNonEmptySuffixAppendsHint() {
-        let instruction = PersonalizationEngine.buildInstruction(personaNote: nil, suffix: " jumps over the lazy dog")
-        #expect(instruction.hasPrefix(PersonalizationEngine.baseInstruction))
+        let instruction = PersonalizationEngine.buildInstruction(personaNote: nil, suffix: " jumps over the lazy dog", targetWords: 4)
+        #expect(instruction.hasPrefix(PersonalizationEngine.baseInstruction(targetWords: 4)))
         #expect(instruction.contains("jumps over the lazy dog"))
         #expect(instruction.contains("must not repeat it"))
     }
@@ -162,13 +162,72 @@ import Testing
         // "z" doesn't appear anywhere in the base instruction or hint scaffolding text,
         // so counting occurrences isolates exactly how much of the suffix made it through.
         let longSuffix = String(repeating: "z", count: 500)
-        let instruction = PersonalizationEngine.buildInstruction(personaNote: nil, suffix: longSuffix)
+        let instruction = PersonalizationEngine.buildInstruction(personaNote: nil, suffix: longSuffix, targetWords: 4)
         let hintZCount = instruction.filter { $0 == "z" }.count
         #expect(hintZCount == 120)
     }
 
     @Test func buildInstructionWithWhitespaceOnlySuffixUsesBase() {
-        let instruction = PersonalizationEngine.buildInstruction(personaNote: nil, suffix: "   \n  ")
-        #expect(instruction == PersonalizationEngine.baseInstruction)
+        let instruction = PersonalizationEngine.buildInstruction(personaNote: nil, suffix: "   \n  ", targetWords: 4)
+        #expect(instruction == PersonalizationEngine.baseInstruction(targetWords: 4))
+    }
+
+    // MARK: - baseInstruction targetWords (WP-B: firm, non-empty completions)
+
+    @Test func baseInstructionIncludesTargetWordCount() {
+        #expect(PersonalizationEngine.baseInstruction(targetWords: 4).contains("at least 2 and at most 4 words"))
+        #expect(PersonalizationEngine.baseInstruction(targetWords: 20).contains("at least 2 and at most 20 words"))
+    }
+
+    // targetWords < 2 (CompletionLength.short, maxWords == 1) must not render the
+    // self-contradictory "at least 2 and at most 1 words" — it gets its own single-word sentence.
+    @Test func baseInstructionSingleWordCaseAvoidsContradiction() {
+        #expect(!PersonalizationEngine.baseInstruction(targetWords: 1).contains("at least 2"))
+        #expect(PersonalizationEngine.baseInstruction(targetWords: 4).contains("at least 2 and at most 4 words"))
+    }
+
+    @Test func baseInstructionRequiresEnglish() {
+        // Dogfooding: Gemma is multilingual and produced an Italian ghost with no constraint
+        // in place. This is a hard-coded English-only instruction for now; a future language
+        // setting should replace it (see also GhostText.isLikelyEnglish for the output-side gate).
+        #expect(PersonalizationEngine.baseInstruction(targetWords: 4).contains("Write only in English."))
+    }
+
+    @Test func baseInstructionBansPunctuationOnlyAndEmptyReplies() {
+        let instruction = PersonalizationEngine.baseInstruction(targetWords: 4)
+        #expect(instruction.contains("Never reply with only punctuation, an ellipsis, or an empty line"))
+        #expect(instruction.contains("always predict the most likely next words"))
+    }
+
+    @Test func baseInstructionKeepsExistingStyleAndNoRepetitionWording() {
+        let instruction = PersonalizationEngine.baseInstruction(targetWords: 4)
+        #expect(instruction.contains("matching their wording and style"))
+        // Softened by WP-6 from "Do not repeat what they already wrote" — the old wording read
+        // as forbidding the model from finishing an in-progress word, which conflicts with the
+        // new mid-word-completion sentence below.
+        #expect(instruction.contains("Do not repeat words they already completed"))
+        #expect(instruction.contains("do not add quotes, labels, or explanations"))
+    }
+
+    // MARK: - baseInstruction mid-word completion (WP-6)
+
+    @Test func baseInstructionIncludesMidWordCompletionRule() {
+        let instruction = PersonalizationEngine.baseInstruction(targetWords: 4)
+        #expect(instruction.contains("middle of a word"))
+        #expect(instruction.contains("no space before them"))
+    }
+
+    @Test func buildInstructionWithNoPersonaOrSuffixIsByteIdenticalToBase() {
+        // Cache-stability invariant: the instruction must be byte-identical every cycle when
+        // there's no persona/suffix — no per-keystroke dynamic mid-word text may have crept in,
+        // or the WS6 KV-cache would rebuild on every keystroke instead of reusing.
+        let instruction = PersonalizationEngine.buildInstruction(personaNote: nil, suffix: "", targetWords: 4)
+        #expect(instruction == PersonalizationEngine.baseInstruction(targetWords: 4))
+    }
+
+    @Test func buildInstructionIsDeterministicAcrossRepeatedCalls() {
+        let first = PersonalizationEngine.buildInstruction(personaNote: nil, suffix: "", targetWords: 4)
+        let second = PersonalizationEngine.buildInstruction(personaNote: nil, suffix: "", targetWords: 4)
+        #expect(first == second)
     }
 }

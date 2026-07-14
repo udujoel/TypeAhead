@@ -196,10 +196,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     deps.overlayController.hide()
                     deps.completionPipeline.keystrokeReceived()
                 } else {
+                    // `injection` is exactly what was just inserted into the field (leading
+                    // space + word + trailing space) — WP-2 needs it to keep a mirror ghost's
+                    // stored `textBeforeCursor` in sync with what's actually on screen now.
                     deps.overlayController.continueShowingML(
                         ghost: remaining,
                         epoch: generationEpoch,
-                        cursorRect: deps.accessibilityManager.inlineCursorRect()
+                        cursorRect: deps.accessibilityManager.inlineCursorRect(),
+                        acceptedText: injection
                     )
                 }
             }

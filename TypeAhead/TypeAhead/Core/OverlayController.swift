@@ -45,6 +45,23 @@ final class OverlayController {
 
     private(set) var mode: OverlayMode = .hidden
 
+    /// Everything needed to re-render the currently-visible ghost WITHOUT a fresh AX read —
+    /// captured on every `paint`/`update` alongside `mode` (WP-2). `AccessibilityManager.
+    /// inlineCursorRect()` returns `nil` for the `.mirror` presentation by design (mirror doesn't
+    /// need caret-level precision — it carries its own copy of the typed text), which used to mean
+    /// every mid-word type-through and post-Tab-accept remainder on a mirror ghost hit the
+    /// `cursorRect == nil` branch and hid instead of advancing (WP-A KNOWN LIMITATION). Storing
+    /// this here lets `handleKeystroke`/`continueShowingML` re-render the mirror from the last
+    /// known rect/tier plus an UPDATED `textBeforeCursor`, with no AX call at all.
+    private struct PlacementContext {
+        var presentation: PlacementPresentation
+        var tier: PlacementTier
+        var rect: NSRect
+        var fontSize: CGFloat
+        var textBeforeCursor: String
+    }
+    private var placementContext: PlacementContext?
+
     init(panel: CompletionOverlay, keyMonitor: KeyEventMonitor, onPlacementSuppressed: @escaping () -> Void = {}) {
         self.panel = panel
         self.keyMonitor = keyMonitor
@@ -59,29 +76,34 @@ final class OverlayController {
     /// `presentation` (WS5 — `PlacementPolicy.presentation(for:)`) gates whether this actually
     /// paints: `.suppress` means the placement guess (mouse position) is untrustworthy enough
     /// that showing the ghost anywhere would read as "buggy app," so we no-op and record a
-    /// rejected/`placementSuppressed` event instead. `.inline` and `.pinnedBar` both paint at
-    /// `cursorRect` as before — for `.pinnedBar` that rect is already the pinned-bar origin
-    /// (`OverlayPositioner.pinnedOrigin`, computed upstream in `AccessibilityManager`), so no
-    /// separate rendering path is needed to "keep that look."
-    func showSpell(ghost: String, replaceLen: Int, epoch: Int, cursorRect: NSRect, fontSize: CGFloat, presentation: PlacementPresentation) {
+    /// rejected/`placementSuppressed` event instead. `.inline` paints at `cursorRect` as before.
+    /// `.mirror` (WP-A) renders the Cotypist-style two-tone bar instead — `tier` and
+    /// `textBeforeCursor` are only consulted in that branch (see `paint(...)`).
+    func showSpell(
+        ghost: String, replaceLen: Int, epoch: Int, cursorRect: NSRect, fontSize: CGFloat,
+        presentation: PlacementPresentation, tier: PlacementTier, textBeforeCursor: String
+    ) {
         guard presentation != .suppress else {
             recordSuppressed()
             return
         }
         mode = OverlayStateMachine.showSpell(ghost: ghost, replaceLen: replaceLen, epoch: epoch)
-        panel.show(text: ghost, near: cursorRect, fontSize: fontSize)
+        paint(ghost: ghost, cursorRect: cursorRect, fontSize: fontSize, presentation: presentation, tier: tier, textBeforeCursor: textBeforeCursor)
         keyMonitor.isOverlayVisible = true
     }
 
     /// Emoji fast path. Same shape as `showSpell` — always a fresh "shown". See `showSpell` for
-    /// the `presentation` gating.
-    func showEmoji(ghost: String, replaceLen: Int, epoch: Int, cursorRect: NSRect, fontSize: CGFloat, presentation: PlacementPresentation) {
+    /// the `presentation`/`tier`/`textBeforeCursor` gating.
+    func showEmoji(
+        ghost: String, replaceLen: Int, epoch: Int, cursorRect: NSRect, fontSize: CGFloat,
+        presentation: PlacementPresentation, tier: PlacementTier, textBeforeCursor: String
+    ) {
         guard presentation != .suppress else {
             recordSuppressed()
             return
         }
         mode = OverlayStateMachine.showEmoji(ghost: ghost, replaceLen: replaceLen, epoch: epoch)
-        panel.show(text: ghost, near: cursorRect, fontSize: fontSize)
+        paint(ghost: ghost, cursorRect: cursorRect, fontSize: fontSize, presentation: presentation, tier: tier, textBeforeCursor: textBeforeCursor)
         keyMonitor.isOverlayVisible = true
     }
 
@@ -92,21 +114,24 @@ final class OverlayController {
     /// whether to record a `.shown` event (mirrors the original
     /// `isOverlayVisible && !currentText.isEmpty` check in `AppDependencies.runCompletion`).
     ///
-    /// See `showSpell` for the `presentation` gating (`.suppress` no-ops and records
-    /// `placementSuppressed` instead of painting).
+    /// See `showSpell` for the `presentation`/`tier`/`textBeforeCursor` gating (`.suppress`
+    /// no-ops and records `placementSuppressed` instead of painting).
     @discardableResult
-    func showOrUpdateML(ghost: String, epoch: Int, cursorRect: NSRect, fontSize: CGFloat, presentation: PlacementPresentation) -> Bool {
+    func showOrUpdateML(
+        ghost: String, epoch: Int, cursorRect: NSRect, fontSize: CGFloat,
+        presentation: PlacementPresentation, tier: PlacementTier, textBeforeCursor: String
+    ) -> Bool {
         guard presentation != .suppress else {
             recordSuppressed()
             return false
         }
         if mode.isVisible {
             mode = OverlayStateMachine.showML(ghost: ghost, epoch: epoch)
-            panel.update(text: ghost, near: cursorRect)
+            update(ghost: ghost, cursorRect: cursorRect, presentation: presentation, tier: tier, textBeforeCursor: textBeforeCursor)
             return false
         } else {
             mode = OverlayStateMachine.showML(ghost: ghost, epoch: epoch)
-            panel.show(text: ghost, near: cursorRect, fontSize: fontSize)
+            paint(ghost: ghost, cursorRect: cursorRect, fontSize: fontSize, presentation: presentation, tier: tier, textBeforeCursor: textBeforeCursor)
             keyMonitor.isOverlayVisible = true
             return true
         }
@@ -117,13 +142,71 @@ final class OverlayController {
         onPlacementSuppressed()
     }
 
+    /// First paint of a ghost this cycle: routes to the plain inline panel or (WP-A) the
+    /// two-tone mirror, composing the mirror's `typedTail` from `textBeforeCursor` via
+    /// `MirrorText.compose` right here so every show call site just threads the raw AX text
+    /// through instead of duplicating the composition. Also captures `placementContext` (WP-2) so
+    /// later keystrokes/accepts can re-render without another AX read.
+    private func paint(
+        ghost: String, cursorRect: NSRect, fontSize: CGFloat,
+        presentation: PlacementPresentation, tier: PlacementTier, textBeforeCursor: String
+    ) {
+        placementContext = PlacementContext(
+            presentation: presentation, tier: tier, rect: cursorRect, fontSize: fontSize,
+            textBeforeCursor: textBeforeCursor)
+        if presentation == .mirror {
+            let line = MirrorText.compose(textBeforeCursor: textBeforeCursor, ghost: ghost)
+            panel.showMirror(typed: line.typedTail, ghost: line.ghost, near: cursorRect, fontSize: fontSize, tier: tier)
+        } else {
+            panel.show(text: ghost, near: cursorRect, fontSize: fontSize)
+        }
+    }
+
+    /// In-place update within a generation cycle (streamed ML tokens) — the mirror/inline split
+    /// mirrors `paint(...)` above, minus the font size (already set by the cycle's first paint, and
+    /// preserved in `placementContext` rather than reset here).
+    private func update(
+        ghost: String, cursorRect: NSRect,
+        presentation: PlacementPresentation, tier: PlacementTier, textBeforeCursor: String
+    ) {
+        let fontSize = placementContext?.fontSize ?? 14
+        placementContext = PlacementContext(
+            presentation: presentation, tier: tier, rect: cursorRect, fontSize: fontSize,
+            textBeforeCursor: textBeforeCursor)
+        if presentation == .mirror {
+            let line = MirrorText.compose(textBeforeCursor: textBeforeCursor, ghost: ghost)
+            panel.updateMirror(typed: line.typedTail, ghost: line.ghost, near: cursorRect, tier: tier)
+        } else {
+            panel.update(text: ghost, near: cursorRect)
+        }
+    }
+
     /// After a word is accepted from an ML completion and the caller (glue code — the
     /// word-vs-remaining split stays there, see `AppDelegate`) computes what's left, keep showing
-    /// it for the next Tab. If `cursorRect` is nil, this is a silent no-op — the overlay is left
-    /// showing its previous (now stale) text. That mirrors a pre-existing edge case in the
-    /// original code (the `else if let rect = ...` had no `else` branch); preserved rather than
-    /// "fixed" per the behavior-preserving mandate.
-    func continueShowingML(ghost: String, epoch: Int, cursorRect: NSRect?) {
+    /// it for the next Tab.
+    ///
+    /// `acceptedText` is exactly what the caller just inserted into the field via AX (leading
+    /// space + word + trailing space, see `AppDelegate`'s `.acceptWord` case) — needed to keep a
+    /// mirror ghost's stored `textBeforeCursor` in sync with what's actually now on screen.
+    ///
+    /// WP-2: when the last paint was a `.mirror` presentation, this re-renders from
+    /// `placementContext` (stored rect/tier, `textBeforeCursor` advanced by `acceptedText`) —
+    /// no AX call needed, so it's never a no-op for mirror ghosts anymore (WP-A KNOWN LIMITATION
+    /// resolved). For `.inline` (and the defensive case where `placementContext` is somehow nil),
+    /// behavior is unchanged from before: `cursorRect` must be a fresh AX read from the caller, and
+    /// a nil `cursorRect` is a silent no-op leaving the overlay showing its previous (now stale)
+    /// text — a pre-existing edge case (the original code's `else if let rect = ...` had no `else`
+    /// branch) preserved rather than "fixed."
+    func continueShowingML(ghost: String, epoch: Int, cursorRect: NSRect?, acceptedText: String) {
+        if let context = placementContext, context.presentation == .mirror {
+            let updatedText = context.textBeforeCursor + acceptedText
+            placementContext?.textBeforeCursor = updatedText
+            mode = OverlayStateMachine.showML(ghost: ghost, epoch: epoch)
+            let line = MirrorText.compose(textBeforeCursor: updatedText, ghost: ghost)
+            panel.updateMirror(typed: line.typedTail, ghost: line.ghost, near: context.rect, tier: context.tier)
+            keyMonitor.isOverlayVisible = true
+            return
+        }
         guard let cursorRect else { return }
         mode = OverlayStateMachine.showML(ghost: ghost, epoch: epoch)
         panel.update(text: ghost, near: cursorRect)
@@ -133,18 +216,36 @@ final class OverlayController {
     // MARK: - Keystroke
 
     /// Routes a keystroke through `OverlayStateMachine.keystroke` and applies the panel/mode/
-    /// mirror side effects. `cursorRect` is `@autoclosure` so the caret rect is only read (an AX
-    /// call) when actually needed — the original code only fetched it inside the
-    /// advance-with-nonempty-remainder branch.
+    /// `isOverlayVisible`-mirror side effects. `cursorRect` is `@autoclosure` so the caret rect is
+    /// only read (an AX call) when actually needed — the original code only fetched it inside the
+    /// advance-with-nonempty-remainder branch, and the mirror path below never reads it at all.
+    ///
+    /// WP-2 mirror trace: when the ghost that just advanced is an `.mlCompletion` shown via
+    /// `.mirror` presentation, this re-renders from `placementContext` (stored rect/tier,
+    /// `textBeforeCursor` advanced by `typedChar`) instead of taking the fresh-`cursorRect()`
+    /// path below — `AccessibilityManager.inlineCursorRect()` returns `nil` for `.mirror` by
+    /// design, which used to force every mid-word type-through on a mirror ghost into the
+    /// `.cursorUnavailable` branch and hide (WP-A KNOWN LIMITATION, now resolved for
+    /// `.mlCompletion`). Inline mode, and emoji/spell mirror ghosts, are unchanged: they still use
+    /// the fresh AX rect and hide on nil.
     func handleKeystroke(typedChar: String?, cursorRect: @autoclosure () -> NSRect?) -> OverlayKeystrokeEffect {
         let previousGhost = mode.ghost
         let outcome = OverlayStateMachine.keystroke(mode: mode, typedChar: typedChar)
         switch outcome {
         case .advanced(let newMode):
+            if case .mlCompletion = mode, let context = placementContext, context.presentation == .mirror {
+                let updatedText = context.textBeforeCursor + (typedChar ?? "")
+                placementContext?.textBeforeCursor = updatedText
+                mode = newMode
+                let line = MirrorText.compose(textBeforeCursor: updatedText, ghost: newMode.ghost)
+                panel.updateMirror(typed: line.typedTail, ghost: line.ghost, near: context.rect, tier: context.tier)
+                return .advanced
+            }
             guard let rect = cursorRect() else {
                 mode = .hidden
                 keyMonitor.isOverlayVisible = false
                 panel.hide(animated: false)
+                placementContext = nil
                 return .cursorUnavailable(previousGhost: previousGhost)
             }
             mode = newMode
@@ -154,11 +255,13 @@ final class OverlayController {
             mode = .hidden
             keyMonitor.isOverlayVisible = false
             panel.hide(animated: false)
+            placementContext = nil
             return .typedThroughToEmpty(previousGhost: previousGhost)
         case .diverged:
             mode = .hidden
             keyMonitor.isOverlayVisible = false
             panel.hide(animated: false)
+            placementContext = nil
             return .diverged(previousGhost: previousGhost)
         }
     }
@@ -173,6 +276,7 @@ final class OverlayController {
         mode = .hidden
         keyMonitor.isOverlayVisible = false
         panel.hide(animated: animated)
+        placementContext = nil
     }
 
     // MARK: - Tab accept

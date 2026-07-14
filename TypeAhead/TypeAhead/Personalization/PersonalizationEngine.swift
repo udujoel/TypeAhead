@@ -39,11 +39,43 @@ final class PersonalizationEngine {
 
     /// The base system instruction given to the model on every completion.
     /// Kept here (not in InferenceEngine) so it's accessible to SPM unit tests
-    /// without importing MLXLLM. `nonisolated` — pure constant, no actor state.
-    nonisolated static let baseInstruction =
-        "Continue the text the user is writing. Reply with only the next few words that come "
-        + "naturally, matching their wording and style. Do not repeat what they already wrote, "
-        + "and do not add quotes, labels, or explanations."
+    /// without importing MLXLLM. `nonisolated` — pure function, no actor state.
+    ///
+    /// WP-B (aggressive, persistent suggestions): earlier wording ("Reply with only the next
+    /// few words") was too soft — the model happily replied with '.', '...', or an empty line,
+    /// which collapses to ghost="" and nothing shows. This firms up the instruction with an
+    /// explicit word-count target and an outright ban on punctuation-only/empty replies, so a
+    /// suggestion is expected on every cycle, not just the ones where the model felt like it.
+    ///
+    /// WP-6 (mid-word completion): added the "middle of a word" sentence so the model completes
+    /// a word the user is still typing ("he" -> "lp") instead of always jumping ahead to a new
+    /// word. This is STATIC text, not the actual partial word — the instruction is the FIRST
+    /// part of the prompt token sequence the KV-cache (WS6, see PromptCacheValidity) is keyed
+    /// on, so embedding per-keystroke dynamic text here (e.g. "complete 'he'") would change
+    /// token 0 on every keystroke and force a full cache rebuild every cycle, defeating cache
+    /// reuse entirely. A fixed sentence, byte-identical every cycle, keeps the cache warm.
+    ///
+    /// - Parameter targetWords: the user's configured completion length
+    ///   (`settings.completionLength.maxWords`) — the model is told to produce between 2 and
+    ///   this many words. Threaded in by `InferenceEngine.complete` as its own `maxWords`
+    ///   parameter (the same value that later clamps the displayed ghost via `GhostText`), so
+    ///   the instruction and the display cap always agree. `targetWords < 2` (i.e.
+    ///   `CompletionLength.short`, maxWords == 1) gets its own sentence — "at least 2 and at
+    ///   most 1 words" is self-contradictory — while every other value keeps the exact
+    ///   byte-identical range sentence.
+    nonisolated static func baseInstruction(targetWords: Int) -> String {
+        let lengthSentence = targetWords < 2
+            ? "Always continue with exactly one word that comes naturally, matching their "
+            + "wording and style."
+            : "Always continue with at least 2 and at most \(targetWords) words that come "
+            + "naturally, matching their wording and style."
+        return "Continue the text the user is writing. " + lengthSentence + " If the "
+        + "text ends in the middle of a word, first finish that exact word (output only its "
+        + "remaining letters, with no space before them), then continue with the following "
+        + "words. Write only in English. Never reply with only punctuation, an ellipsis, or an "
+        + "empty line — always predict the most likely next words. Do not repeat words they "
+        + "already completed, and do not add quotes, labels, or explanations."
+    }
 
     /// Defensive re-cap for the suffix hint appended to the instruction. `ContextBuilder.buildSuffix`
     /// already caps at this many chars, but the instruction builder shouldn't trust that from a
@@ -59,12 +91,15 @@ final class PersonalizationEngine {
     ///   seed itself (that must stay exactly the user's prefix; see InferenceEngine/HFBridge).
     ///   Empty suffix (the common "cursor at end of text" case) leaves the instruction
     ///   byte-identical to the no-suffix behavior.
-    nonisolated static func buildInstruction(personaNote: String?, suffix: String = "") -> String {
+    /// - Parameter targetWords: forwarded to `baseInstruction(targetWords:)` — see its doc
+    ///   comment. Structural composition here (persona prefix, suffix hint) is unchanged from
+    ///   before WP-B; only `baseInstruction`'s own text now varies with this value.
+    nonisolated static func buildInstruction(personaNote: String?, suffix: String = "", targetWords: Int) -> String {
         let base: String
         if let note = personaNote, !note.isEmpty {
-            base = "\(note)\n\n\(baseInstruction)"
+            base = "\(note)\n\n\(baseInstruction(targetWords: targetWords))"
         } else {
-            base = baseInstruction
+            base = baseInstruction(targetWords: targetWords)
         }
 
         let cappedSuffix = String(suffix.prefix(maxSuffixHintChars))

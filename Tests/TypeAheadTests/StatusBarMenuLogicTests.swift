@@ -64,4 +64,30 @@ import Foundation
     @Test func statusLineLoading() {
         #expect(StatusBarMenuLogic.statusLine(modelName: "Qwen 3 1B", isReady: false) == "Qwen 3 1B · Loading…")
     }
+
+    // MARK: - statusItemRecoveryDecision
+
+    @Test func recoveryHealthyResetsStreakAndDoesNothing() {
+        let decision = StatusBarMenuLogic.statusItemRecoveryDecision(
+            isHealthy: true, previousConsecutiveUnhealthyChecks: 3, hasOpenedFallbackSettings: false)
+        #expect(decision == .init(consecutiveUnhealthyChecks: 0, shouldRecreate: false, shouldOpenFallbackSettings: false))
+    }
+
+    @Test func recoveryFirstUnhealthyRecreatesWithoutFallback() {
+        let decision = StatusBarMenuLogic.statusItemRecoveryDecision(
+            isHealthy: false, previousConsecutiveUnhealthyChecks: 0, hasOpenedFallbackSettings: false)
+        #expect(decision == .init(consecutiveUnhealthyChecks: 1, shouldRecreate: true, shouldOpenFallbackSettings: false))
+    }
+
+    @Test func recoverySecondConsecutiveUnhealthyOpensFallback() {
+        let decision = StatusBarMenuLogic.statusItemRecoveryDecision(
+            isHealthy: false, previousConsecutiveUnhealthyChecks: 1, hasOpenedFallbackSettings: false)
+        #expect(decision == .init(consecutiveUnhealthyChecks: 2, shouldRecreate: true, shouldOpenFallbackSettings: true))
+    }
+
+    @Test func recoveryDoesNotReopenFallbackOnceAlreadyShown() {
+        let decision = StatusBarMenuLogic.statusItemRecoveryDecision(
+            isHealthy: false, previousConsecutiveUnhealthyChecks: 4, hasOpenedFallbackSettings: true)
+        #expect(decision == .init(consecutiveUnhealthyChecks: 5, shouldRecreate: true, shouldOpenFallbackSettings: false))
+    }
 }

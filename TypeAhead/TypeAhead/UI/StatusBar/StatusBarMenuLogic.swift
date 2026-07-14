@@ -32,4 +32,35 @@ enum StatusBarMenuLogic {
     static func statusLine(modelName: String, isReady: Bool) -> String {
         "\(modelName) · \(isReady ? "Ready" : "Loading…")"
     }
+
+    // MARK: - Status-item health recovery
+
+    /// Outcome of a single status-item health check: whether to tear down and recreate the
+    /// item, the updated consecutive-unhealthy streak, and whether this is the moment to fall
+    /// back to opening Settings (recreation didn't stick — twice unhealthy in a row).
+    struct StatusItemRecoveryDecision: Equatable {
+        let consecutiveUnhealthyChecks: Int
+        let shouldRecreate: Bool
+        let shouldOpenFallbackSettings: Bool
+    }
+
+    /// Decides what a health check should do given the current health signal and prior state.
+    /// A healthy item resets the streak and does nothing. An unhealthy item always triggers a
+    /// recreate attempt; the fallback (opening Settings so the user always has a reachable
+    /// surface) fires only when this is the second consecutive unhealthy check — i.e. the
+    /// previous recreate didn't stick — and only once per app run.
+    static func statusItemRecoveryDecision(
+        isHealthy: Bool,
+        previousConsecutiveUnhealthyChecks: Int,
+        hasOpenedFallbackSettings: Bool
+    ) -> StatusItemRecoveryDecision {
+        guard !isHealthy else {
+            return StatusItemRecoveryDecision(
+                consecutiveUnhealthyChecks: 0, shouldRecreate: false, shouldOpenFallbackSettings: false)
+        }
+        let count = previousConsecutiveUnhealthyChecks + 1
+        let openFallback = count >= 2 && !hasOpenedFallbackSettings
+        return StatusItemRecoveryDecision(
+            consecutiveUnhealthyChecks: count, shouldRecreate: true, shouldOpenFallbackSettings: openFallback)
+    }
 }

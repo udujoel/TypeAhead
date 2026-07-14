@@ -19,6 +19,18 @@ if [ -z "$APP" ]; then
   exit 1
 fi
 
+# Guard: refuse to launch a build that isn't signed for Accessibility. A build
+# produced by the headless CODE_SIGNING_ALLOWED=NO compile-check (see CLAUDE.md)
+# is ad-hoc signed, not signed "Apple Development". Launching that build grants
+# Accessibility to the wrong code identity and poisons the TCC record, forcing
+# a re-grant on every subsequent (properly signed) rebuild.
+if ! codesign -dv "$APP" 2>&1 | grep -q "Authority=Apple Development"; then
+  echo "⚠️  This build is ad-hoc signed, not signed for Accessibility."
+  echo "    Launching it would break the Accessibility permission for the real app."
+  echo "    Fix: open Xcode, press Cmd+B to rebuild, then run ./run.sh again."
+  exit 1
+fi
+
 LOG="${TMPDIR:-/tmp}/typeahead.log"
 : > "$LOG"   # truncate
 

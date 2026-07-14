@@ -43,4 +43,19 @@ enum PromptCacheValidity {
         let delta = Array(newTokens[cachedTokens.count...])
         return .reuse(deltaTokens: delta)
     }
+
+    /// Pure arithmetic behind the WP-5 cache-offset reconciliation in `InferenceEngine.complete`:
+    /// how many tokens the live KV cache holds beyond what the engine's tracked prompt-token
+    /// count claims. `MLXLMCommon.generate`'s `TokenIterator.step()` mutates a `[KVCache]`'s
+    /// offset on every generated token, but the engine only ever records PROMPT tokens after a
+    /// generation — so after producing N tokens the cache secretly holds K/V state for
+    /// (prompt + N generated tokens) while the tracked count still says just the prompt. A
+    /// positive result means that untracked tail must be trimmed (or the cache invalidated if
+    /// untrimmable) before the next reuse-vs-rebuild decision, or the model will attend to
+    /// phantom text from the previous turn — including its trailing end-of-turn token, which is
+    /// a near-deterministic "emit EOS now" signal that produces an empty completion. Zero or
+    /// negative means cache and tracked count already agree (nothing to trim).
+    static func cacheOverflow(cacheOffset: Int, trackedTokenCount: Int) -> Int {
+        max(0, cacheOffset - trackedTokenCount)
+    }
 }

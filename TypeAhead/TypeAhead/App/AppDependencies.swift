@@ -81,6 +81,11 @@ final class AppDependencies {
             overlayController.hide(animated: false)
         }
         focusEpoch.focusChanged()
+        // WP-5 (P1): drop the screen-context OCR cache on every focus change (app switch or
+        // in-field switch) rather than relying solely on the TTL below. This is the actual
+        // "new field/app gets fresh context" guarantee; the TTL just bounds how stale a
+        // same-field re-read can get between focus changes, so it can be generous.
+        screenContextCache = nil
     }
 
     /// Records a suggestion-lifecycle event to both the persisted `eventStore` (lengths only)
@@ -124,8 +129,15 @@ final class AppDependencies {
         Task { @MainActor in try? store.record(event) }
     }
 
+    // WP-5 (P1): was 2.0s. At 2s, any OCR drift (including the ghost overlay itself appearing in
+    // the screenshot) changes prompt token 0 (`[Screen: ...]` is prepended to the prompt head —
+    // see ContextBuilder.buildPrompt), forcing a full KV-cache rebuild every <=2s even when the
+    // user hasn't changed fields. `handleFocusChange` above now invalidates this cache on every
+    // focus/app change, which is the real correctness boundary ("new field/app gets fresh
+    // context") — the TTL here only bounds staleness of a same-field re-read between those
+    // focus changes, so it can be generous without letting stale context leak across fields.
     private var screenContextCache: CompletionCoordinator.ScreenContextCache?
-    private let screenContextCacheTTL: TimeInterval = 2.0
+    private let screenContextCacheTTL: TimeInterval = 30.0
 
     private func runCompletion() async {
         // Latency measurement (WS2): stamped here, at the moment the debounced pipeline fires
@@ -234,7 +246,9 @@ final class AppDependencies {
                     epoch: cycleEpoch,
                     cursorRect: placement.rect,
                     fontSize: fontSize,
-                    presentation: placement.presentation
+                    presentation: placement.presentation,
+                    tier: placement.tier,
+                    textBeforeCursor: context.textBeforeCursor
                 )
                 guard placement.presentation != .suppress else { return }
                 recordSuggestionEvent(
@@ -262,7 +276,9 @@ final class AppDependencies {
                     epoch: cycleEpoch,
                     cursorRect: placement.rect,
                     fontSize: fontSize,
-                    presentation: placement.presentation
+                    presentation: placement.presentation,
+                    tier: placement.tier,
+                    textBeforeCursor: context.textBeforeCursor
                 )
                 guard placement.presentation != .suppress else { return }
                 recordSuggestionEvent(
@@ -344,9 +360,14 @@ final class AppDependencies {
         // 1-2 characters. 8 chars = one meaningful word + space.
         guard context.textBeforeCursor.trimmingCharacters(in: .whitespacesAndNewlines).count >= 8 else { return }
 
-        // Suppress immediately after a sentence terminator (. ! ?). The model has no useful
-        // signal for the next clause until the user starts typing it.
-        guard !ContextBuilder.shouldSuppressAtSentenceEnd(textBeforeCursor: context.textBeforeCursor) else { return }
+        // WP-B: attempt from the second word on, and NEVER stop attempting after a sentence
+        // terminator (. ! ?) — the old `ContextBuilder.shouldSuppressAtSentenceEnd` guard here
+        // meant a completion never even attempted at a sentence end. The owner wants suggestions
+        // "always... from the second word"; the firmer `PersonalizationEngine.buildInstruction`
+        // wording now supports the model starting a fresh sentence instead of trailing off.
+        // `shouldSuppressAtSentenceEnd` itself is left in place (unused by this pipeline) for
+        // possible future per-app policy use.
+        guard CompletionCoordinator.shouldAttemptCompletion(textBeforeCursor: context.textBeforeCursor) else { return }
 
         let prompt = ContextBuilder.buildPrompt(
             context: context,
@@ -389,44 +410,119 @@ final class AppDependencies {
         let generationEpoch = cycleEpoch
         logger.debug("completion request: source=\(source, privacy: .public) prompt='\(prompt.suffix(60), privacy: .private)' suffix='\(suffix.prefix(40), privacy: .private)' persona=\(personaNote != nil, privacy: .public) cursor=\(cursorRect.debugDescription, privacy: .public)")
         let promptTail = String(context.textBeforeCursor.suffix(40))
+        // Captured separately from `context` (rather than reaching into it from inside the
+        // streaming closure below) so the mirror's `MirrorText.compose` always gets the FULL
+        // pre-cursor text, not `promptTail`'s already-40-char-clipped tail — a clip that isn't
+        // "last line"-aware and could otherwise cut a mirror's typed tail mid-word or across a
+        // newline it shouldn't see.
+        let mirrorTypedText = context.textBeforeCursor
 
-        inferenceEngine.complete(
-            prompt: prompt,
-            suffix: suffix,
-            maxTokens: settings.completionLength.maxTokens,
-            maxWords: settings.completionLength.maxWords,
-            personaNote: personaNote
-        ) { [weak self] full in
-            // Called on the model executor — hop to main to touch UI.
-            Task { @MainActor [weak self] in
-                guard let self, !full.isEmpty else { return }
-                // Focus moved since this generation started (handleFocusChange bumped the epoch and
-                // already hid the overlay). This callback was scheduled before that and would
-                // otherwise re-show the prior field's suggestion in the new one. Drop it.
-                guard focusEpoch.mayAccept(stampedEpoch: generationEpoch) else { return }
-                let firstPaint = overlayController.showOrUpdateML(
-                    ghost: full,
-                    epoch: generationEpoch,
-                    cursorRect: cursorRect,
-                    fontSize: fontSize,
-                    presentation: placement.presentation
-                )
-                // Only the FIRST paint of a generation cycle counts as "shown" — every subsequent
-                // streamed token update goes through the update-in-place branch inside
-                // `showOrUpdateML`, which intentionally does not re-record. A `.suppress`
-                // presentation never reaches here at all — the WS5 early-out above returns before
-                // inference even starts (and records `placementSuppressed` itself).
-                if firstPaint {
-                    logger.debug("overlay.show '\(full.prefix(40), privacy: .private)' at \(cursorRect.origin.debugDescription, privacy: .public)")
-                    recordSuggestionEvent(
-                        kind: .shown,
-                        promptTail: promptTail,
-                        ghostText: full,
-                        latencyMs: Date().timeIntervalSince(generationStart) * 1000,
-                        metadata: "ml,tier=\(placement.tier.rawValue)"
+        // WP-2 stale-paint guard / WP-B retry-once (item 3): snapshot the pipeline's validity
+        // token now, before any inference starts. `CompletionPipeline.cycleValidityToken`
+        // increments on every debounce/max-wait `fire()` (a newer keystroke started a fresher
+        // cycle) AND on every `cancel()` (a correction key — backspace/arrows — invalidated this
+        // cycle without starting a new one, see `cycleValidityToken`'s doc comment for the
+        // "heelp" bug this closes) — so if it's still equal to this snapshot when a paint or a
+        // completion arrives, nothing has happened since that would make this generation stale.
+        // Combined with `focusEpoch.mayAccept`, this is the staleness guard BOTH the paint path
+        // (`onUpdate` below) and the retry path (`onComplete` below) check before painting/
+        // re-firing: either signal moving means abort. (A newer keystroke during attempt 0 would
+        // also have called `inferenceEngine.complete` again directly, which cancels `currentTask`
+        // — cancellation already skips `onComplete` entirely, per `InferenceEngine.complete`'s `if
+        // !Task.isCancelled { onComplete() }` — but `onUpdate` closures already scheduled onto the
+        // main actor run regardless of cancellation, which is exactly the "heelp" mechanism: the
+        // counter check below is what actually stops those late paints.)
+        let cycleValidityToken = completionPipeline.cycleValidityToken
+
+        func runInference(temperature: Float, attempt: Int) {
+            // Tracks whether this attempt ever produced a usable ghost (a non-empty `full` —
+            // InferenceEngine.ghostText/GhostText.build already collapses junk output to "").
+            // A tiny `@unchecked Sendable` box (same pattern as InferenceEngine's
+            // `PromptCacheBox`) because `onUpdate`/`onComplete` are both `@Sendable` and need to
+            // share this one flag across the same generation.
+            let outcome = GenerationOutcome()
+
+            inferenceEngine.complete(
+                prompt: prompt,
+                suffix: suffix,
+                maxTokens: settings.completionLength.maxTokens,
+                maxWords: settings.completionLength.maxWords,
+                personaNote: personaNote,
+                temperature: temperature
+            ) { [weak self] full in
+                // Called on the model executor — hop to main to touch UI.
+                Task { @MainActor [weak self] in
+                    guard let self, !full.isEmpty else { return }
+                    outcome.producedUsableGhost = true
+                    // Focus moved since this generation started (handleFocusChange bumped the epoch and
+                    // already hid the overlay). This callback was scheduled before that and would
+                    // otherwise re-show the prior field's suggestion in the new one. Drop it.
+                    guard focusEpoch.mayAccept(stampedEpoch: generationEpoch) else { return }
+                    // "heelp" bug (WP-2): this `onUpdate` Task was already hopping to the main
+                    // actor when a superseding keystroke landed — cancellation of the underlying
+                    // model task doesn't stop a hop already in flight. Without this guard, a late
+                    // paint from a cycle the user has since typed past (or corrected away with
+                    // backspace) could land AFTER the newer keystroke, producing exactly the
+                    // dogfooding bug: ghost text painted onto a field that no longer matches the
+                    // prompt it was generated for, then Tab-accepted into garbage ("heelp"). The
+                    // retry path below already had this guard; the paint path did not.
+                    guard completionPipeline.cycleValidityToken == cycleValidityToken else { return }
+                    let firstPaint = overlayController.showOrUpdateML(
+                        ghost: full,
+                        epoch: generationEpoch,
+                        cursorRect: cursorRect,
+                        fontSize: fontSize,
+                        presentation: placement.presentation,
+                        tier: placement.tier,
+                        textBeforeCursor: mirrorTypedText
                     )
+                    // Only the FIRST paint of a generation cycle counts as "shown" — every subsequent
+                    // streamed token update goes through the update-in-place branch inside
+                    // `showOrUpdateML`, which intentionally does not re-record. A `.suppress`
+                    // presentation never reaches here at all — the WS5 early-out above returns before
+                    // inference even starts (and records `placementSuppressed` itself).
+                    if firstPaint {
+                        logger.debug("overlay.show '\(full.prefix(40), privacy: .private)' at \(cursorRect.origin.debugDescription, privacy: .public)")
+                        recordSuggestionEvent(
+                            kind: .shown,
+                            promptTail: promptTail,
+                            ghostText: full,
+                            latencyMs: Date().timeIntervalSince(generationStart) * 1000,
+                            metadata: "ml,tier=\(placement.tier.rawValue)"
+                        )
+                    }
+                }
+            } onComplete: { [weak self] in
+                // Called on the model executor (see onUpdate's comment above) — hop to main
+                // before touching any AppDependencies state.
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    guard CompletionCoordinator.shouldRetryGeneration(
+                        attempt: attempt, producedUsableGhost: outcome.producedUsableGhost
+                    ) else { return }
+                    // Staleness guards — see the comment on `cycleValidityToken` above: abort the
+                    // retry if focus moved on, or a newer keystroke/correction-key already
+                    // invalidated this cycle, since either means this prompt is no longer relevant.
+                    guard focusEpoch.mayAccept(stampedEpoch: generationEpoch) else { return }
+                    guard completionPipeline.cycleValidityToken == cycleValidityToken else { return }
+                    // No user text logged — matches the rest of this file's privacy discipline.
+                    logger.info("retrying generation: attempt 0 produced no usable ghost, retrying at temperature=0.8")
+                    runInference(temperature: 0.8, attempt: 1)
                 }
             }
-        } onComplete: {}
+        }
+
+        runInference(temperature: 0.5, attempt: 0)
     }
+}
+
+/// Tiny mutable box shared between a generation's `onUpdate`/`onComplete` closures (WP-B retry)
+/// so `runCompletion` can tell, once a generation finishes, whether it ever produced a usable
+/// ghost. `@unchecked Sendable` is deliberate: `InferenceEngine.complete` only ever has one
+/// generation in flight per `runInference` call (each call creates its own fresh box), and every
+/// read/write of `producedUsableGhost` happens inside a `Task { @MainActor in ... }` hop, so
+/// there's no actual concurrent access despite crossing the `@Sendable` closure boundary — same
+/// reasoning `InferenceEngine`'s own `PromptCacheBox` documents.
+private final class GenerationOutcome: @unchecked Sendable {
+    var producedUsableGhost = false
 }

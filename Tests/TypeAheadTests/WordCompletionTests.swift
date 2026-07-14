@@ -119,4 +119,20 @@ import Testing
         #expect(ghost == " you want", "strip of whole-word partial must preserve the space before continuation")
         #expect(ghost.hasPrefix(" "), "ghost must lead with space so Tab gives 'I do you want', not 'I doyou want'")
     }
+
+    // MARK: - WP-6: owner's exact dogfooding scenario ("he" -> "help")
+
+    @Test func midWordCompletionOwnerScenarioSuffixOnly() {
+        // Model emits just the missing letters — no restatement.
+        let ghost = GhostText.build(typed: "I need some he", raw: "lp", isFillInMiddle: true)
+        #expect(ghost == "lp")
+        #expect(!ghost.hasPrefix(" "))
+    }
+
+    @Test func midWordCompletionOwnerScenarioWithRestatement() {
+        // Model restates the whole word "help" before continuing — strip must fire,
+        // preserving the interior spacing of the rest of the sentence.
+        let ghost = GhostText.build(typed: "I need some he", raw: "help with this", isFillInMiddle: true)
+        #expect(ghost == "lp with this")
+    }
 }

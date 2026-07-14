@@ -120,12 +120,34 @@ enum OverlayStateMachine {
         typedChar: String?,
         wrap: (String) -> OverlayMode
     ) -> OverlayKeystrokeOutcome {
-        guard !ghost.isEmpty, let typed = typedChar, typed.count == 1, ghost.hasPrefix(typed) else {
+        guard !ghost.isEmpty, let typed = typedChar, typed.count == 1 else {
+            return .diverged
+        }
+        // Exact match is the common case (typed char literally equals the ghost's next
+        // character). WP-2 divergence-persistence design decision: also treat two DIFFERENT
+        // word-boundary characters (space/newline) as a match — e.g. the ghost starts with " "
+        // but the user pressed Return instead — since that's really a type-through with
+        // different spacing/line-break choice, not a genuine divergence from what the model
+        // predicted. Every other mismatch still diverges unconditionally: a wrong ghost must
+        // never stay on screen (Tab must never be able to accept text the user didn't actually
+        // type towards).
+        guard ghost.hasPrefix(typed) || isBoundaryEquivalent(ghostHead: ghost.first, typed: typed) else {
             return .diverged
         }
         let remaining = String(ghost.dropFirst())
         if remaining.isEmpty { return .typedThroughToEmpty }
         return .advanced(newMode: wrap(remaining))
+    }
+
+    /// True when `ghostHead` and the single-character `typed` are both "word boundary"
+    /// characters (space or newline) — see `typeThroughOutcome`'s doc comment.
+    private static func isBoundaryEquivalent(ghostHead: Character?, typed: String) -> Bool {
+        guard let ghostHead, let typedHead = typed.first, typed.count == 1 else { return false }
+        return isWordBoundary(ghostHead) && isWordBoundary(typedHead)
+    }
+
+    private static func isWordBoundary(_ char: Character) -> Bool {
+        char == " " || char == "\n"
     }
 
     // MARK: - Escape / focus change

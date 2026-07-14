@@ -79,6 +79,53 @@ struct OverlayStateTests {
         #expect(OverlayStateMachine.keystroke(mode: mode, typedChar: nil) == .diverged)
     }
 
+    // MARK: - Keystroke: WP-2 word-boundary type-through equivalence
+
+    @Test func keystrokeOnMLCompletionAdvancesWhenNewlineTypedAgainstSpaceLeadingGhost() {
+        // Ghost starts with a space (new-word continuation), but the user pressed Return
+        // instead — both are word-boundary characters, so this is a type-through with
+        // different spacing, not a divergence.
+        let mode = OverlayMode.mlCompletion(ghost: " you", epoch: 5)
+        let outcome = OverlayStateMachine.keystroke(mode: mode, typedChar: "\n")
+        #expect(outcome == .advanced(newMode: .mlCompletion(ghost: "you", epoch: 5)))
+    }
+
+    @Test func keystrokeOnMLCompletionAdvancesWhenSpaceTypedAgainstNewlineLeadingGhost() {
+        let mode = OverlayMode.mlCompletion(ghost: "\nhello", epoch: 5)
+        let outcome = OverlayStateMachine.keystroke(mode: mode, typedChar: " ")
+        #expect(outcome == .advanced(newMode: .mlCompletion(ghost: "hello", epoch: 5)))
+    }
+
+    @Test func keystrokeOnMLCompletionBoundaryEquivalenceCanTypeThroughToEmpty() {
+        let mode = OverlayMode.mlCompletion(ghost: "\n", epoch: 5)
+        let outcome = OverlayStateMachine.keystroke(mode: mode, typedChar: " ")
+        #expect(outcome == .typedThroughToEmpty)
+    }
+
+    @Test func keystrokeOnMLCompletionStillDivergesWhenOnlyTypedCharIsBoundary() {
+        // Ghost's next character ("h") is NOT a word boundary — typing a space must still
+        // diverge, not be treated as boundary-equivalent.
+        let mode = OverlayMode.mlCompletion(ghost: "hello", epoch: 5)
+        let outcome = OverlayStateMachine.keystroke(mode: mode, typedChar: " ")
+        #expect(outcome == .diverged)
+    }
+
+    @Test func keystrokeOnMLCompletionStillDivergesWhenOnlyGhostHeadIsBoundary() {
+        // Ghost starts with a space but the typed character is an ordinary letter — must
+        // still diverge.
+        let mode = OverlayMode.mlCompletion(ghost: " you", epoch: 5)
+        let outcome = OverlayStateMachine.keystroke(mode: mode, typedChar: "x")
+        #expect(outcome == .diverged)
+    }
+
+    @Test func keystrokeOnEmojiAdvancesOnBoundaryEquivalence() {
+        // The same helper backs both `.mlCompletion` and `.emoji` type-through — confirm emoji
+        // gets the same boundary-equivalence treatment.
+        let mode = OverlayMode.emoji(ghost: " ab", replaceLen: 5, epoch: 7)
+        let outcome = OverlayStateMachine.keystroke(mode: mode, typedChar: "\n")
+        #expect(outcome == .advanced(newMode: .emoji(ghost: "ab", replaceLen: 5, epoch: 7)))
+    }
+
     // MARK: - Keystroke: emoji type-through
 
     @Test func keystrokeOnEmojiAdvancesAndPreservesReplaceLenAndEpoch() {

@@ -10,7 +10,9 @@ import os
 @MainActor
 final class StatusBarMenu: NSObject, NSMenuDelegate {
     private let logger = Logger(subsystem: "app.typeahead", category: "StatusBarMenu")
-    private let statusItem: NSStatusItem
+    /// Recreated in place by `installStatusItem()` when the health check finds the backing
+    /// WindowServer scene dead — see `verifyAndRecoverStatusItem()`.
+    private var statusItem: NSStatusItem!
     private let settings: AppSettings
     private let pipeline: CompletionPipeline
     private let modelManager: ModelManager
@@ -22,6 +24,14 @@ final class StatusBarMenu: NSObject, NSMenuDelegate {
     /// Last-known accepted count, refreshed asynchronously whenever the menu opens.
     private var acceptedCount: Int = 0
 
+    // MARK: - Status-item health recovery state
+
+    private var recoveryTimer: Timer?
+    private var consecutiveUnhealthyChecks = 0
+    /// Guards the fallback-Settings breadcrumb so it only ever fires once per app run —
+    /// repeated unhealthy checks would otherwise reopen Settings every 60s.
+    private var hasOpenedFallbackSettings = false
+
     init(settings: AppSettings,
          pipeline: CompletionPipeline,
          modelManager: ModelManager,
@@ -30,29 +40,25 @@ final class StatusBarMenu: NSObject, NSMenuDelegate {
         self.pipeline = pipeline
         self.modelManager = modelManager
         self.historyStore = historyStore
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
-        configureButton()
-
-        let menu = NSMenu()
-        menu.delegate = self          // contents rebuilt on each open — always fresh
-        rebuild(menu)                 // eager build: never show an empty menu if the delegate misfires
-        statusItem.menu = menu
+        installStatusItem()
 
         // Diagnostic so we can confirm from logs that THIS build's menu installed and is visible
         // (vs. a stale build, or the icon being hidden behind the notch / a crowded menu bar).
         let hasButton = statusItem.button != nil
-        logger.info("StatusBarMenu installed — button=\(hasButton, privacy: .public) visible=\(self.statusItem.isVisible, privacy: .public) items=\(menu.items.count, privacy: .public) (rich menu v3 + ^~T)")
+        logger.info("StatusBarMenu installed — button=\(hasButton, privacy: .public) visible=\(self.statusItem.isVisible, privacy: .public) items=\(self.statusItem.menu?.items.count ?? 0, privacy: .public) (rich menu v3 + ^~T)")
 
         // After layout settles, report whether macOS actually placed the icon in a menu-bar
         // window. windowAttached=false with visible=true is the signature of notch/overflow
         // hiding — the icon exists but has no on-screen slot. The ⌃⌥⌘T shortcut covers that case.
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1))
-            let attached = self.statusItem.button?.window != nil
+            let attached = self.isStatusItemHealthy()
             let w = Int(self.statusItem.button?.frame.width ?? 0)
             self.logger.info("StatusBarMenu post-launch — windowAttached=\(attached, privacy: .public) buttonWidth=\(w, privacy: .public) (if false: icon hidden by overflow — use ^~T)")
         }
+
+        scheduleStatusItemHealthChecks()
     }
 
     /// Opens the full status menu at the current mouse location — the escape hatch for when the
@@ -66,6 +72,20 @@ final class StatusBarMenu: NSObject, NSMenuDelegate {
     }
 
     // MARK: - Status-item button (must never become invisible)
+
+    /// Builds the `NSStatusItem` from scratch: allocates it from `NSStatusBar.system`,
+    /// configures its button, and attaches a freshly-built menu. Shared by `init` and by
+    /// `verifyAndRecoverStatusItem()` — the latter calls this after removing a dead item so
+    /// recovery goes through exactly the same setup path as first launch.
+    private func installStatusItem() {
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        configureButton()
+
+        let menu = NSMenu()
+        menu.delegate = self          // contents rebuilt on each open — always fresh
+        rebuild(menu)                 // eager build: never show an empty menu if the delegate misfires
+        statusItem.menu = menu
+    }
 
     private func configureButton() {
         // Force-visible: without an explicit true here a previously-persisted hidden state
@@ -82,6 +102,64 @@ final class StatusBarMenu: NSObject, NSMenuDelegate {
             button.title = "TA"
         }
         button.toolTip = "TypeAhead — AI text completions"
+    }
+
+    // MARK: - Status-item health check + recovery
+    //
+    // macOS can tear down the status item's backing WindowServer scene out from under us —
+    // logs show `FBSSceneErrorDomain code 2 "scene-invalidated"` — while AppKit-side state
+    // (`statusItem.button`, `statusItem.isVisible`) keeps reporting everything as fine. That
+    // failure isn't directly observable from the app; the best available proxy is whether the
+    // button's window is actually attached and on-screen, which is the same signal the
+    // post-launch diagnostic probe above logs as `windowAttached`. This is best-effort: a
+    // scene-dead item and a notch/overflow-hidden item can look identical from here, so an
+    // unhealthy reading triggers a recreate either way (harmless if the item was just hidden,
+    // not dead) and, if it doesn't stick, a one-time fallback to the Settings window.
+
+    /// Schedules the recurring health check: once ~5s after launch (give layout time to
+    /// settle) and then every 60s for the life of the app. Each check is two property reads
+    /// when healthy — cheap enough to leave running indefinitely.
+    private func scheduleStatusItemHealthChecks() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            self?.verifyAndRecoverStatusItem()
+        }
+        recoveryTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.verifyAndRecoverStatusItem() }
+        }
+    }
+
+    /// Best-effort proxy for "is the status item actually on screen": the button must exist
+    /// and its window must be attached and visible. See the health-check section note above
+    /// for why this can't be more precise.
+    private func isStatusItemHealthy() -> Bool {
+        guard let window = statusItem.button?.window else { return false }
+        return window.isVisible && window.windowNumber > 0
+    }
+
+    /// Runs one health check and acts on `StatusBarMenuLogic.statusItemRecoveryDecision`: an
+    /// unhealthy item is torn down and rebuilt via `installStatusItem()`; if it's still
+    /// unhealthy on the very next check (the recreate didn't stick), Settings is opened once
+    /// per app run so the user always has a reachable surface.
+    private func verifyAndRecoverStatusItem() {
+        let decision = StatusBarMenuLogic.statusItemRecoveryDecision(
+            isHealthy: isStatusItemHealthy(),
+            previousConsecutiveUnhealthyChecks: consecutiveUnhealthyChecks,
+            hasOpenedFallbackSettings: hasOpenedFallbackSettings)
+
+        consecutiveUnhealthyChecks = decision.consecutiveUnhealthyChecks
+
+        guard decision.shouldRecreate else { return }
+
+        logger.info("status item scene dead — recreating (consecutive=\(self.consecutiveUnhealthyChecks, privacy: .public))")
+        NSStatusBar.system.removeStatusItem(statusItem)
+        installStatusItem()
+
+        if decision.shouldOpenFallbackSettings {
+            hasOpenedFallbackSettings = true
+            logger.info("status item still unhealthy after recreate — opening Settings as a reachable fallback")
+            SettingsWindowController.shared.open()
+        }
     }
 
     // MARK: - NSMenuDelegate
