@@ -15,6 +15,11 @@ enum StatusBarMenuLogic {
         return isExcluded ? "Turn On Suggestions in \(name)" : "Turn Off Suggestions in \(name)"
     }
 
+    /// Title for the per-website item shown when a browser is in front.
+    static func perSiteItemTitle(domain: String, isEnabled: Bool) -> String {
+        isEnabled ? "Turn Off Suggestions on \(domain)" : "Turn On Suggestions on \(domain)"
+    }
+
     /// Whether suggestions are currently snoozed (a pause deadline exists and is still in the future).
     static func isPaused(pausedUntil: Date?, now: Date) -> Bool {
         guard let until = pausedUntil else { return false }

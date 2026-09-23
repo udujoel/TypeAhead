@@ -219,4 +219,14 @@ import Testing
             #expect(settings.appRegistry[bundleID]?.override.completionsEnabled == false, "expected \(bundleID) pre-seeded")
         }
     }
+
+    @Test func siteRulesNormalizeAndPersist() {
+        let (d, suiteName) = Self.isolatedDefaults(#function)
+        defer { d.removePersistentDomain(forName: suiteName) }
+        let first = AppSettings(defaults: d)
+        #expect(first.updateSiteRule(domain: "https://www.MyBank.com/login") { $0.completionsEnabled = false })
+        #expect(!first.updateSiteRule(domain: "not a domain") { $0.completionsEnabled = false })
+        let second = AppSettings(defaults: d)
+        #expect(second.siteRules == ["mybank.com": AppOverride(completionsEnabled: false)])
+    }
 }

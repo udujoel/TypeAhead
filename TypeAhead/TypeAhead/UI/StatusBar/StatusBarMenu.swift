@@ -66,9 +66,11 @@ final class StatusBarMenu: NSObject, NSMenuDelegate {
     /// menu-bar icon is hidden behind the notch on a crowded menu bar. Wired to the global ⌃⌥⌘T
     /// shortcut. Builds a fresh menu so it never conflicts with the one owned by `statusItem`.
     func showMenuAtMouse() {
-        NSApp.activate(ignoringOtherApps: true)
+        // Build before activating: once TypeAhead is frontmost, the per-app and per-site items
+        // can no longer see which app (and page) the user was in.
         let popup = NSMenu()
         rebuild(popup)
+        NSApp.activate(ignoringOtherApps: true)
         popup.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
     }
 
@@ -231,6 +233,18 @@ final class StatusBarMenu: NSObject, NSMenuDelegate {
                 appItem.representedObject = bundleID
                 menu.addItem(appItem)
             }
+            // Per-website on/off when a browser is in front and its page address is readable.
+            if SiteRules.isBrowser(bundleID: bundleID),
+               let host = AppDependencies.shared.accessibilityManager.focusedWebHost(),
+               let domain = SiteRules.matchingDomain(host: host, in: settings.siteRules.keys)
+                   ?? SiteRules.normalizedDomain(host) {
+                let siteEnabled = settings.siteRules[domain]?.completionsEnabled ?? enabled
+                let siteItem = NSMenuItem(title: StatusBarMenuLogic.perSiteItemTitle(domain: domain, isEnabled: siteEnabled),
+                                          action: #selector(toggleSite(_:)), keyEquivalent: "")
+                siteItem.target = self
+                siteItem.representedObject = [domain, siteEnabled ? "off" : "on"]
+                menu.addItem(siteItem)
+            }
         }
 
         menu.addItem(.separator())
@@ -329,6 +343,16 @@ final class StatusBarMenu: NSObject, NSMenuDelegate {
         guard let bundleID = sender.representedObject as? String,
               let (name, _) = frontmostTargetApp() else { return }
         setPerApp(bundleID: bundleID, displayName: name, enabled: !perAppEnabled(bundleID: bundleID))
+    }
+
+    @objc private func toggleSite(_ sender: NSMenuItem) {
+        guard let payload = sender.representedObject as? [String], payload.count == 2 else { return }
+        let turnOn = payload[1] == "on"
+        settings.updateSiteRule(domain: payload[0]) { $0.completionsEnabled = turnOn }
+        if !turnOn {
+            AppDependencies.shared.overlayController.hide(animated: false)
+            AppDependencies.shared.inferenceEngine.cancelCurrent()
+        }
     }
 
     /// B3: the ⌃⌥⌘` shortcut — flip completions for whatever app is in front, with a brief HUD so

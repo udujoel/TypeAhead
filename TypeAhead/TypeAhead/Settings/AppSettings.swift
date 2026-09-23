@@ -93,6 +93,16 @@ final class AppSettings {
         }
     }
 
+    /// Per-website rules for browsers (normalized domain → override layered over the browser's
+    /// app override; see `SiteRules`). Only domains the user adds are stored.
+    var siteRules: [String: AppOverride] {
+        didSet {
+            if let data = try? JSONEncoder().encode(siteRules) {
+                defaults.set(data, forKey: Keys.siteRules)
+            }
+        }
+    }
+
     init(defaults d: UserDefaults = .standard) {
         self.defaults = d
         completionsEnabled    = d.object(forKey: Keys.completionsEnabled)    as? Bool   ?? true
@@ -119,6 +129,13 @@ final class AppSettings {
             appRegistry = decoded
         } else {
             appRegistry = [:]
+        }
+
+        if let data = d.data(forKey: Keys.siteRules),
+           let decoded = try? JSONDecoder().decode([String: AppOverride].self, from: data) {
+            siteRules = decoded
+        } else {
+            siteRules = [:]
         }
 
         // The old v2 migration bumped the delay to 0.35s to avoid firing on every
@@ -195,6 +212,17 @@ final class AppSettings {
         appRegistry[bundleID] = app
     }
 
+    /// Edits (creating if needed) the rule for a website. Returns false when `domain` isn't a web
+    /// domain. The single write path for the Websites section and the status menu's site item.
+    @discardableResult
+    func updateSiteRule(domain: String, _ edit: (inout AppOverride) -> Void) -> Bool {
+        guard let key = SiteRules.normalizedDomain(domain) else { return false }
+        var rule = siteRules[key] ?? AppOverride()
+        edit(&rule)
+        siteRules[key] = rule
+        return true
+    }
+
     private enum Keys {
         static let completionsEnabled     = "completionsEnabled"
         static let completionDelay        = "completionDelay"
@@ -203,6 +231,7 @@ final class AppSettings {
         static let addSpaceAfterAcceptedWord = "addSpaceAfterAcceptedWord"
         static let midLineCompletionsEnabled = "midLineCompletionsEnabled"
         static let englishVariant = "englishVariant"
+        static let siteRules = "siteRules"
         static let storeInputHistory      = "storeInputHistory"
         static let personalizationStrength = "personalizationStrength"
         static let customInstructions     = "customInstructions"

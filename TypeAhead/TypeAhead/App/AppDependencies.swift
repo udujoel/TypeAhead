@@ -56,13 +56,25 @@ final class AppDependencies {
     /// The effective policy for `bundleID` (nil = no identifiable frontmost app) from the current
     /// settings. The one place the global toggles, legacy exclusion list, and per-app override are
     /// combined — `runCompletion`, the status menu, and the per-app shortcut all go through here.
-    func resolvePolicy(bundleID: String?) -> ResolvedPolicy {
-        AppPolicyResolver.resolve(
+    ///
+    /// `siteDomain` is the matched website rule (browsers only, see `currentSiteDomain`); its
+    /// fields layer over the browser's own override.
+    func resolvePolicy(bundleID: String?, siteDomain: String? = nil) -> ResolvedPolicy {
+        let appOverride = bundleID.flatMap { settings.appRegistry[$0]?.override }
+        let override = siteDomain.flatMap { settings.siteRules[$0] }.map { $0.layered(over: appOverride) } ?? appOverride
+        return AppPolicyResolver.resolve(
             globalCompletionsEnabled: settings.completionsEnabled,
             excludedByList: bundleID.map { settings.exceptionList.isExcluded(bundleID: $0) } ?? false,
-            override: bundleID.flatMap { settings.appRegistry[$0]?.override },
+            override: override,
             globalRecordHistory: settings.storeInputHistory
         )
+    }
+
+    /// The website rule covering the page focused in a browser, or nil. Costs nothing unless the
+    /// user has added a site rule and a browser is in front.
+    func currentSiteDomain(bundleID: String) -> String? {
+        guard !settings.siteRules.isEmpty, SiteRules.isBrowser(bundleID: bundleID) else { return nil }
+        return SiteRules.matchingDomain(host: accessibilityManager.focusedWebHost(), in: settings.siteRules.keys)
     }
 
     init() {
@@ -186,7 +198,7 @@ final class AppDependencies {
         // generalizes that rule to also honor an explicit per-app override).
         if let frontApp = NSWorkspace.shared.frontmostApplication, let bundleID = frontApp.bundleIdentifier {
             settings.registerAppIfNeeded(bundleID: bundleID, displayName: frontApp.localizedName ?? bundleID)
-            currentPolicy = resolvePolicy(bundleID: bundleID)
+            currentPolicy = resolvePolicy(bundleID: bundleID, siteDomain: currentSiteDomain(bundleID: bundleID))
             guard CompletionCoordinator.shouldRunCycle(policy: currentPolicy) else { return }
         } else {
             currentPolicy = resolvePolicy(bundleID: nil)

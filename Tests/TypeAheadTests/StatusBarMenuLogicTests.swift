@@ -131,4 +131,9 @@ import Foundation
         let notice = StatusBarMenuLogic.secureInputNotice(isSecureInputOn: true)
         #expect(notice?.contains("Secure Input") == true)
     }
+
+    @Test func perSiteTitles() {
+        #expect(StatusBarMenuLogic.perSiteItemTitle(domain: "github.com", isEnabled: true) == "Turn Off Suggestions on github.com")
+        #expect(StatusBarMenuLogic.perSiteItemTitle(domain: "github.com", isEnabled: false) == "Turn On Suggestions on github.com")
+    }
 }

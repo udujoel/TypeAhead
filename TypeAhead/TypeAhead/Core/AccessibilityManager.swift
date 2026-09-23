@@ -133,6 +133,39 @@ final class AccessibilityManager {
         return TextContext(textBeforeCursor: before, textAfterCursor: after, appName: appName, windowTitle: windowTitle)
     }
 
+    /// The host of the web page that owns keyboard focus in a browser, or nil. Walks up from the
+    /// focused element to the web area that reports `AXURL` (Safari, Chromium), falling back to the
+    /// focused window's `AXDocument`. Only called for browsers, and only when site rules exist.
+    func focusedWebHost() -> String? {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(appElement, 0.5)
+        var focusedRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+           let focused = focusedRef {
+            var element = focused as! AXUIElement
+            for _ in 0..<40 {
+                var urlRef: CFTypeRef?
+                if AXUIElementCopyAttributeValue(element, "AXURL" as CFString, &urlRef) == .success,
+                   let url = urlRef as? URL, let host = url.host(), !host.isEmpty {
+                    return host
+                }
+                var parentRef: CFTypeRef?
+                guard AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parentRef) == .success,
+                      let parent = parentRef else { break }
+                element = parent as! AXUIElement
+            }
+        }
+        var windowRef: CFTypeRef?
+        if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowRef) == .success,
+           let window = windowRef,
+           let document = (window as! AXUIElement).stringAttribute(kAXDocumentAttribute),
+           let host = URL(string: document)?.host(), !host.isEmpty {
+            return host
+        }
+        return nil
+    }
+
     func insertCompletion(_ text: String, into element: AXUIElement) {
         let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
         guard AppInsertionPolicy.preferredMethod(forBundleID: bundleID, compatibilityMode: compatibilityMode(bundleID)) == .ax else {
