@@ -54,6 +54,13 @@ enum StatusBarMenuLogic {
         userEnabled && !isPaused(pausedUntil: pausedUntil, now: now)
     }
 
+    /// Shown in the menu while macOS Secure Input is on. While it is, the system hides every
+    /// keystroke from other apps' event taps, so TypeAhead can't see typing and stays silent —
+    /// this tells the user why instead of looking broken.
+    static func secureInputNotice(isSecureInputOn: Bool) -> String? {
+        isSecureInputOn ? "Secure Input is on — suggestions paused until you leave the password field or app" : nil
+    }
+
     /// One-line header describing engine readiness, e.g. "Gemma 4 E2B · Ready" / "… · Loading…".
     static func statusLine(modelName: String, isReady: Bool) -> String {
         "\(modelName) · \(isReady ? "Ready" : "Loading…")"

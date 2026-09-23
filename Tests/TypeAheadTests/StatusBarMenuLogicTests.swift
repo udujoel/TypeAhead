@@ -123,4 +123,12 @@ import Foundation
         #expect(StatusBarMenuLogic.SnoozeOption.allCases.map(\.title)
                 == ["Pause for 15 Minutes", "Pause for 1 Hour", "Pause Until Tomorrow Morning"])
     }
+
+    // MARK: - Secure Input notice
+
+    @Test func secureInputLineOnlyWhenActive() {
+        #expect(StatusBarMenuLogic.secureInputNotice(isSecureInputOn: false) == nil)
+        let notice = StatusBarMenuLogic.secureInputNotice(isSecureInputOn: true)
+        #expect(notice?.contains("Secure Input") == true)
+    }
 }

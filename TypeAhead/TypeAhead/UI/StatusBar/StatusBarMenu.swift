@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import os
 
 /// The menu-bar status item — TypeAhead's primary control surface for an accessory (no-Dock) app.
@@ -185,6 +186,9 @@ final class StatusBarMenu: NSObject, NSMenuDelegate {
         menu.addItem(disabledItem(StatusBarMenuLogic.statusLine(modelName: activeModelName, isReady: isReady)))
         if acceptedCount > 0 {
             menu.addItem(disabledItem("\(acceptedCount) completions accepted"))
+        }
+        if let notice = StatusBarMenuLogic.secureInputNotice(isSecureInputOn: IsSecureEventInputEnabled()) {
+            menu.addItem(disabledItem("⚠︎ " + notice))
         }
 
         menu.addItem(.separator())
