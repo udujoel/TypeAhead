@@ -24,6 +24,7 @@ import Testing
         #expect(settings.activeModelID == ModelConfig.defaultModel.id)
         #expect(settings.addSpaceAfterAcceptedWord == true)
         #expect(settings.midLineCompletionsEnabled == true)
+        #expect(settings.englishVariant == .automatic)
     }
 
     @Test func newAcceptAndMidLineSettingsPersist() {

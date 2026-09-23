@@ -247,6 +247,12 @@ final class AppDependencies {
         // late paints.)
         let cycleValidityToken = completionPipeline.cycleValidityToken
 
+        // English variant: the dictionary used by the spell/word-completion fast paths below and
+        // the spelling sentence of the model instruction come from one setting, so they agree.
+        let systemSpellLanguage = NSSpellChecker.shared.language()
+        let spellLanguage = settings.englishVariant.spellCheckerLanguage(systemLanguage: systemSpellLanguage)
+        let britishSpelling = settings.englishVariant.usesBritishSpelling(systemLanguage: systemSpellLanguage)
+
         // Read the text around the cursor. Prefer the Accessibility API (full
         // field contents); fall back to the keystroke buffer for apps where AX
         // is unavailable (e.g. some Electron apps).
@@ -281,7 +287,7 @@ final class AppDependencies {
         //
         // Both detectors run even when no ML model is loaded (checked further below); neither
         // needs the inference engine.
-        let spellFix = TypoDetector.correction(in: context.textBeforeCursor)
+        let spellFix = TypoDetector.correction(in: context.textBeforeCursor, language: spellLanguage)
         // A10: the "Enable Emoji Suggestions" toggle was never read — honor it here.
         let emojiShortcode: String? = settings.emojiSuggestionsEnabled
             && EmojiSuggester.isEmojiMode(textBeforeCursor: context.textBeforeCursor)
@@ -508,7 +514,8 @@ final class AppDependencies {
                 maxWords: settings.completionLength.maxWords,
                 personaNote: isRetry ? nil : personaNote,
                 instructionSuffix: isRetry ? "" : suffix,
-                temperature: temperature
+                temperature: temperature,
+                britishSpelling: britishSpelling
             ) { [weak self] full in
                 // Called on the model executor — hop to main to touch UI.
                 Task { @MainActor [weak self] in
@@ -603,7 +610,7 @@ final class AppDependencies {
         guard completionPipeline.cycleValidityToken == cycleValidityToken else { return }
         if let partial = ContextBuilder.currentWord(context: context),
            WordCompleter.shouldOfferInstantCompletion(partial: partial),
-           let suffix = WordCompleter.completionSuffix(forPartial: partial),
+           let suffix = WordCompleter.completionSuffix(forPartial: partial, language: spellLanguage),
            GhostText.isUsableGhost(suffix) {
             let firstPaint = overlayController.showOrUpdateML(
                 ghost: suffix,

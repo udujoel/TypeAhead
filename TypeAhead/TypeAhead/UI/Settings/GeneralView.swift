@@ -33,6 +33,11 @@ struct GeneralView: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
+                Picker("English Spelling", selection: $s.englishVariant) {
+                    ForEach(EnglishVariant.allCases, id: \.self) { variant in
+                        Text(variant.displayName).tag(variant)
+                    }
+                }
                 Toggle("Mid-line Completions", isOn: $s.midLineCompletionsEnabled)
                 Text("Suggest even when there's text after the cursor on the same line.")
                     .font(.caption)

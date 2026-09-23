@@ -67,10 +67,10 @@ final class InferenceEngine {
 
     // WS6: KV-cache reuse across debounce fires. See PromptCacheValidity (pure, SPM-tested) for
     // the reuse-vs-rebuild decision and PromptCacheBox's doc comment for why this needs its own
-    // Sendable box. Invalidated explicitly on model unload (below), focus change
-    // (AppDependencies.handleFocusChange -> invalidateCache()), and Tab-accept insertion
-    // (AppDelegate's .acceptWord case -> invalidateCache()) — anything that changes the field's
-    // text out from under the cached token prefix.
+    // Sendable box. Invalidated explicitly on model unload (below) and focus change
+    // (AppDependencies.handleFocusChange -> invalidateCache()). Tab-accept does NOT invalidate:
+    // accepted text extends the prompt like typing, and the offset reconcile + strict-prefix
+    // decision in `complete()` already rebuild whenever the cached prefix no longer matches.
     private let promptCacheBox = PromptCacheBox()
 
     /// Drops the KV cache and its associated token history. Safe to call even with no model
@@ -168,6 +168,7 @@ final class InferenceEngine {
         personaNote: String? = nil,
         instructionSuffix: String? = nil,
         temperature: Float = 0.5,
+        britishSpelling: Bool = false,
         onUpdate: @escaping @Sendable (String) -> Void,
         onComplete: @escaping @Sendable () -> Void
     ) {
@@ -185,7 +186,7 @@ final class InferenceEngine {
         // are two different concerns that happened to share one parameter before. Defaults to
         // `suffix` so every existing caller (which doesn't pass `instructionSuffix`) sees
         // identical behavior to before this split.
-        let instruction = PersonalizationEngine.buildInstruction(personaNote: personaNote, suffix: instructionSuffix ?? suffix, targetWords: instructionTargetWords)
+        let instruction = PersonalizationEngine.buildInstruction(personaNote: personaNote, suffix: instructionSuffix ?? suffix, targetWords: instructionTargetWords, britishSpelling: britishSpelling)
 
         // ASSISTANT-PREFILL (assembled in HFBridge): the model turn is seeded with `prompt`
         // and left open, so the instruct model continues the user's own text in-distribution.

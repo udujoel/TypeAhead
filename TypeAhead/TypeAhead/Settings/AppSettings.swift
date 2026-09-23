@@ -48,6 +48,10 @@ final class AppSettings {
     var addSpaceAfterAcceptedWord: Bool {
         didSet { defaults.set(addSpaceAfterAcceptedWord, forKey: Keys.addSpaceAfterAcceptedWord) }
     }
+    /// Which English spelling to write and spell-check in (see `EnglishVariant`).
+    var englishVariant: EnglishVariant {
+        didSet { defaults.set(englishVariant.rawValue, forKey: Keys.englishVariant) }
+    }
     /// B7: whether to suggest while there's text after the cursor on the same line.
     var midLineCompletionsEnabled: Bool {
         didSet { defaults.set(midLineCompletionsEnabled, forKey: Keys.midLineCompletionsEnabled) }
@@ -97,6 +101,7 @@ final class AppSettings {
         activeModelID         = d.string(forKey: Keys.activeModelID) ?? ModelConfig.defaultModel.id
         addSpaceAfterAcceptedWord = d.object(forKey: Keys.addSpaceAfterAcceptedWord) as? Bool ?? true
         midLineCompletionsEnabled = d.object(forKey: Keys.midLineCompletionsEnabled) as? Bool ?? true
+        englishVariant = EnglishVariant(rawValue: d.string(forKey: Keys.englishVariant) ?? "") ?? .automatic
         storeInputHistory     = d.object(forKey: Keys.storeInputHistory)     as? Bool   ?? true
         personalizationStrength = d.object(forKey: Keys.personalizationStrength) as? Double ?? 0.5
         customInstructions    = d.string(forKey: Keys.customInstructions) ?? ""
@@ -197,6 +202,7 @@ final class AppSettings {
         static let activeModelID          = "activeModelID"
         static let addSpaceAfterAcceptedWord = "addSpaceAfterAcceptedWord"
         static let midLineCompletionsEnabled = "midLineCompletionsEnabled"
+        static let englishVariant = "englishVariant"
         static let storeInputHistory      = "storeInputHistory"
         static let personalizationStrength = "personalizationStrength"
         static let customInstructions     = "customInstructions"

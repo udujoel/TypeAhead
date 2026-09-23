@@ -40,11 +40,11 @@ enum WordCompleter {
     /// so if the candidate's own casing diverges from what the user typed (e.g. a candidate
     /// capitalized differently mid-word), the suffix reflects the candidate's casing verbatim.
     /// This is documented, not "fixed" — see `WordCompleterTests` for actual observed behavior.
-    static func completionSuffix(forPartial partial: String) -> String? {
+    static func completionSuffix(forPartial partial: String, language: String? = nil) -> String? {
         guard let completions = checker.completions(
             forPartialWordRange: NSRange(location: 0, length: (partial as NSString).length),
             in: partial,
-            language: checker.language(),
+            language: language ?? checker.language(),
             inSpellDocumentWithTag: 0
         ) else { return nil }
 
