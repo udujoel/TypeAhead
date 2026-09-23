@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import TypeAhead
 
@@ -57,5 +58,83 @@ import Testing
         let o = AppOverride(completionsEnabled: nil, tabKeyDisabled: nil, styleInstruction: "Keep it terse and casual.")
         let p = AppPolicyResolver.resolve(globalCompletionsEnabled: true, excludedByList: false, override: o)
         #expect(p.styleInstruction == "Keep it terse and casual.")
+    }
+
+    // MARK: - A3: the global toggle is a master switch
+
+    @Test func globalOffBeatsExplicitPerAppOn() {
+        // Turning TypeAhead off in Settings must stop completions everywhere — an app the user
+        // once set to "On" must not keep suggesting while the global switch is off.
+        let o = AppOverride(completionsEnabled: true)
+        let p = AppPolicyResolver.resolve(globalCompletionsEnabled: false, excludedByList: false, override: o)
+        #expect(p.completionsEnabled == false)
+    }
+
+    @Test func globalOffBeatsExplicitPerAppOnEvenWhenExcluded() {
+        let o = AppOverride(completionsEnabled: true)
+        let p = AppPolicyResolver.resolve(globalCompletionsEnabled: false, excludedByList: true, override: o)
+        #expect(p.completionsEnabled == false)
+    }
+
+    // MARK: - B5: per-app typing-history recording
+
+    @Test func recordHistoryFollowsGlobalByDefault() {
+        #expect(AppPolicyResolver.resolve(globalCompletionsEnabled: true, excludedByList: false, override: nil,
+                                          globalRecordHistory: true).recordHistory == true)
+        #expect(AppPolicyResolver.resolve(globalCompletionsEnabled: true, excludedByList: false, override: nil,
+                                          globalRecordHistory: false).recordHistory == false)
+    }
+
+    @Test func perAppRecordHistoryOffBeatsGlobalOn() {
+        let o = AppOverride(recordHistory: false)
+        let p = AppPolicyResolver.resolve(globalCompletionsEnabled: true, excludedByList: false, override: o,
+                                          globalRecordHistory: true)
+        #expect(p.recordHistory == false)
+    }
+
+    @Test func perAppRecordHistoryOnCannotBeatGlobalOff() {
+        // The global "Collect inputs" toggle is the privacy master switch: when it's off,
+        // nothing is recorded anywhere, whatever an app override says.
+        let o = AppOverride(recordHistory: true)
+        let p = AppPolicyResolver.resolve(globalCompletionsEnabled: true, excludedByList: false, override: o,
+                                          globalRecordHistory: false)
+        #expect(p.recordHistory == false)
+    }
+
+    // MARK: - B9: per-app compatibility mode
+
+    @Test func compatibilityModeDefaultsOff() {
+        let p = AppPolicyResolver.resolve(globalCompletionsEnabled: true, excludedByList: false, override: nil)
+        #expect(p.compatibilityMode == false)
+    }
+
+    @Test func compatibilityModePassesThroughFromOverride() {
+        let o = AppOverride(compatibilityMode: true)
+        let p = AppPolicyResolver.resolve(globalCompletionsEnabled: true, excludedByList: false, override: o)
+        #expect(p.compatibilityMode == true)
+    }
+
+    // MARK: - Persistence compatibility
+
+    @Test func overrideSavedBeforeNewFieldsStillDecodes() throws {
+        // Overrides persisted by earlier builds have no recordHistory/compatibilityMode keys.
+        let json = #"{"completionsEnabled":false,"tabKeyDisabled":true}"#.data(using: .utf8)!
+        let o = try JSONDecoder().decode(AppOverride.self, from: json)
+        #expect(o.completionsEnabled == false)
+        #expect(o.tabKeyDisabled == true)
+        #expect(o.recordHistory == nil)
+        #expect(o.compatibilityMode == nil)
+    }
+
+    // MARK: - A9 / B3: per-app on/off, independent of the global switch
+
+    @Test func perAppEnabledFollowsExclusionListWithoutOverride() {
+        #expect(AppPolicyResolver.perAppCompletionsEnabled(excludedByList: false, override: nil))
+        #expect(!AppPolicyResolver.perAppCompletionsEnabled(excludedByList: true, override: nil))
+    }
+
+    @Test func perAppEnabledPrefersExplicitOverride() {
+        #expect(AppPolicyResolver.perAppCompletionsEnabled(excludedByList: true, override: AppOverride(completionsEnabled: true)))
+        #expect(!AppPolicyResolver.perAppCompletionsEnabled(excludedByList: false, override: AppOverride(completionsEnabled: false)))
     }
 }

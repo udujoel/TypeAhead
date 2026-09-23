@@ -8,12 +8,12 @@ struct CompletionCoordinatorTests {
     // MARK: - Policy-disabled early exit
 
     @Test func shouldRunCycleTrueWhenPolicyEnabled() {
-        let policy = ResolvedPolicy(completionsEnabled: true, tabKeyDisabled: false, styleInstruction: nil)
+        let policy = ResolvedPolicy(completionsEnabled: true, tabKeyDisabled: false, styleInstruction: nil, recordHistory: true, compatibilityMode: false)
         #expect(CompletionCoordinator.shouldRunCycle(policy: policy))
     }
 
     @Test func shouldRunCycleFalseWhenPolicyDisabled() {
-        let policy = ResolvedPolicy(completionsEnabled: false, tabKeyDisabled: false, styleInstruction: nil)
+        let policy = ResolvedPolicy(completionsEnabled: false, tabKeyDisabled: false, styleInstruction: nil, recordHistory: true, compatibilityMode: false)
         #expect(!CompletionCoordinator.shouldRunCycle(policy: policy))
     }
 
@@ -120,5 +120,27 @@ struct CompletionCoordinatorTests {
         let now = at.addingTimeInterval(2.0)
         let cache = CompletionCoordinator.ScreenContextCache(text: "hello", at: at, bundleID: "com.app")
         #expect(!CompletionCoordinator.shouldUseCachedScreenContext(cache: cache, now: now, ttl: 2.0, currentBundleID: "com.app"))
+    }
+
+    // MARK: - B7: mid-line completions toggle
+
+    @Test func notMidLineAtEndOfText() {
+        #expect(!CompletionCoordinator.isMidLine(textAfterCursor: ""))
+    }
+
+    @Test func notMidLineWhenOnlyWhitespaceFollowsOnThisLine() {
+        #expect(!CompletionCoordinator.isMidLine(textAfterCursor: "   "))
+        #expect(!CompletionCoordinator.isMidLine(textAfterCursor: "  \nNext paragraph"))
+    }
+
+    @Test func midLineWhenWordsFollowOnThisLine() {
+        #expect(CompletionCoordinator.isMidLine(textAfterCursor: " and more"))
+        #expect(CompletionCoordinator.isMidLine(textAfterCursor: "tail\nnext"))
+    }
+
+    @Test func midLineGateOnlyBlocksWhenSettingIsOff() {
+        #expect(CompletionCoordinator.passesMidLineGate(midLineEnabled: true, textAfterCursor: " more"))
+        #expect(!CompletionCoordinator.passesMidLineGate(midLineEnabled: false, textAfterCursor: " more"))
+        #expect(CompletionCoordinator.passesMidLineGate(midLineEnabled: false, textAfterCursor: "\nmore"))
     }
 }

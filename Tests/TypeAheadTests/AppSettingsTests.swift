@@ -22,7 +22,39 @@ import Testing
         #expect(settings.completionDelay == 0.12)
         #expect(settings.completionLength == .medium)
         #expect(settings.activeModelID == ModelConfig.defaultModel.id)
-        #expect(settings.showInAllApps == true)
+        #expect(settings.addSpaceAfterAcceptedWord == true)
+        #expect(settings.midLineCompletionsEnabled == true)
+    }
+
+    @Test func newAcceptAndMidLineSettingsPersist() {
+        let (d, suiteName) = Self.isolatedDefaults(#function)
+        defer { d.removePersistentDomain(forName: suiteName) }
+        let first = AppSettings(defaults: d)
+        first.addSpaceAfterAcceptedWord = false
+        first.midLineCompletionsEnabled = false
+        let second = AppSettings(defaults: d)
+        #expect(second.addSpaceAfterAcceptedWord == false)
+        #expect(second.midLineCompletionsEnabled == false)
+    }
+
+    @Test func setOverrideCreatesEntryForUnregisteredApp() {
+        let (d, suiteName) = Self.isolatedDefaults(#function)
+        defer { d.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(defaults: d)
+        settings.updateOverride(bundleID: "com.example.new", displayName: "New") { $0.completionsEnabled = false }
+        #expect(settings.appRegistry["com.example.new"]?.override.completionsEnabled == false)
+        #expect(settings.appRegistry["com.example.new"]?.displayName == "New")
+    }
+
+    @Test func setOverrideKeepsOtherFieldsOfExistingEntry() {
+        let (d, suiteName) = Self.isolatedDefaults(#function)
+        defer { d.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(defaults: d)
+        settings.updateOverride(bundleID: "com.example.app", displayName: "App") { $0.tabKeyDisabled = true }
+        settings.updateOverride(bundleID: "com.example.app", displayName: "App") { $0.completionsEnabled = true }
+        let o = settings.appRegistry["com.example.app"]?.override
+        #expect(o?.tabKeyDisabled == true)
+        #expect(o?.completionsEnabled == true)
     }
 
     // Regression test for the didSet-in-init bug: `completionDelay = 0.12` inside `init`

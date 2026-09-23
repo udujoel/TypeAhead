@@ -43,8 +43,14 @@ final class AppSettings {
     var activeModelID: String {
         didSet { defaults.set(activeModelID, forKey: Keys.activeModelID) }
     }
-    var showInAllApps: Bool {
-        didSet { defaults.set(showInAllApps, forKey: Keys.showInAllApps) }
+    /// B6: whether a space follows the last word of an accepted suggestion (Cotypist's "Include
+    /// trailing space after single-word completions"). See `AcceptPlan`.
+    var addSpaceAfterAcceptedWord: Bool {
+        didSet { defaults.set(addSpaceAfterAcceptedWord, forKey: Keys.addSpaceAfterAcceptedWord) }
+    }
+    /// B7: whether to suggest while there's text after the cursor on the same line.
+    var midLineCompletionsEnabled: Bool {
+        didSet { defaults.set(midLineCompletionsEnabled, forKey: Keys.midLineCompletionsEnabled) }
     }
     var storeInputHistory: Bool {
         didSet { defaults.set(storeInputHistory, forKey: Keys.storeInputHistory) }
@@ -60,9 +66,6 @@ final class AppSettings {
     }
     var useClipboardContext: Bool {
         didSet { defaults.set(useClipboardContext, forKey: Keys.useClipboardContext) }
-    }
-    var launchAtLogin: Bool {
-        didSet { defaults.set(launchAtLogin, forKey: Keys.launchAtLogin) }
     }
     var emojiSuggestionsEnabled: Bool {
         didSet { defaults.set(emojiSuggestionsEnabled, forKey: Keys.emojiSuggestionsEnabled) }
@@ -92,13 +95,13 @@ final class AppSettings {
         completionDelay       = d.object(forKey: Keys.completionDelay)       as? Double ?? 0.12
         completionLength      = CompletionLength(rawValue: d.string(forKey: Keys.completionLength) ?? "") ?? .medium
         activeModelID         = d.string(forKey: Keys.activeModelID) ?? ModelConfig.defaultModel.id
-        showInAllApps         = d.object(forKey: Keys.showInAllApps)         as? Bool   ?? true
+        addSpaceAfterAcceptedWord = d.object(forKey: Keys.addSpaceAfterAcceptedWord) as? Bool ?? true
+        midLineCompletionsEnabled = d.object(forKey: Keys.midLineCompletionsEnabled) as? Bool ?? true
         storeInputHistory     = d.object(forKey: Keys.storeInputHistory)     as? Bool   ?? true
         personalizationStrength = d.object(forKey: Keys.personalizationStrength) as? Double ?? 0.5
         customInstructions    = d.string(forKey: Keys.customInstructions) ?? ""
         useScreenshotContext  = d.object(forKey: Keys.useScreenshotContext)  as? Bool   ?? true
         useClipboardContext   = d.object(forKey: Keys.useClipboardContext)   as? Bool   ?? true
-        launchAtLogin         = d.object(forKey: Keys.launchAtLogin)         as? Bool   ?? true
         emojiSuggestionsEnabled = d.object(forKey: Keys.emojiSuggestionsEnabled) as? Bool ?? true
         if let data = d.data(forKey: Keys.exceptionList),
            let decoded = try? JSONDecoder().decode(AppExceptionList.self, from: data) {
@@ -179,18 +182,26 @@ final class AppSettings {
         appRegistry[bundleID] = RegisteredApp(bundleID: bundleID, displayName: displayName)
     }
 
+    /// Edits one app's override, registering the app first if needed. The single write path for
+    /// the Apps pane, the status menu's per-app item, and the ⌃⌥⌘` shortcut.
+    func updateOverride(bundleID: String, displayName: String, _ edit: (inout AppOverride) -> Void) {
+        var app = appRegistry[bundleID] ?? RegisteredApp(bundleID: bundleID, displayName: displayName)
+        edit(&app.override)
+        appRegistry[bundleID] = app
+    }
+
     private enum Keys {
         static let completionsEnabled     = "completionsEnabled"
         static let completionDelay        = "completionDelay"
         static let completionLength       = "completionLength"
         static let activeModelID          = "activeModelID"
-        static let showInAllApps          = "showInAllApps"
+        static let addSpaceAfterAcceptedWord = "addSpaceAfterAcceptedWord"
+        static let midLineCompletionsEnabled = "midLineCompletionsEnabled"
         static let storeInputHistory      = "storeInputHistory"
         static let personalizationStrength = "personalizationStrength"
         static let customInstructions     = "customInstructions"
         static let useScreenshotContext   = "useScreenshotContext"
         static let useClipboardContext    = "useClipboardContext"
-        static let launchAtLogin          = "launchAtLogin"
         static let emojiSuggestionsEnabled = "emojiSuggestionsEnabled"
         static let exceptionList            = "exceptionList"
         static let appRegistry              = "appRegistry"

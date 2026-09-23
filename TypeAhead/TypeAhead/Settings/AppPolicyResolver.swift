@@ -6,11 +6,25 @@ struct AppOverride: Sendable, Codable, Equatable {
     var completionsEnabled: Bool?
     var tabKeyDisabled: Bool?
     var styleInstruction: String?
+    /// Whether accepted words in this app may be recorded to typing history. Can only turn
+    /// recording OFF for an app — the global "Collect inputs" toggle is the privacy master switch.
+    var recordHistory: Bool?
+    /// "Improve compatibility": insert via synthesized keystrokes and treat the AX caret rect as
+    /// unreliable (Vision/mirror placement) — the user-editable twin of `AppInsertionPolicy`.
+    var compatibilityMode: Bool?
 
-    init(completionsEnabled: Bool? = nil, tabKeyDisabled: Bool? = nil, styleInstruction: String? = nil) {
+    init(
+        completionsEnabled: Bool? = nil,
+        tabKeyDisabled: Bool? = nil,
+        styleInstruction: String? = nil,
+        recordHistory: Bool? = nil,
+        compatibilityMode: Bool? = nil
+    ) {
         self.completionsEnabled = completionsEnabled
         self.tabKeyDisabled = tabKeyDisabled
         self.styleInstruction = styleInstruction
+        self.recordHistory = recordHistory
+        self.compatibilityMode = compatibilityMode
     }
 }
 
@@ -20,6 +34,8 @@ struct ResolvedPolicy: Sendable, Equatable {
     let completionsEnabled: Bool
     let tabKeyDisabled: Bool
     let styleInstruction: String?
+    let recordHistory: Bool
+    let compatibilityMode: Bool
 }
 
 /// An app the user has typed in, tracked for the "Apps" settings pane. Auto-registered the
@@ -38,19 +54,32 @@ struct RegisteredApp: Sendable, Codable, Equatable, Identifiable {
     }
 }
 
-/// Computes the effective per-app policy from three sources with a clear precedence:
-/// an explicit per-app override wins over the legacy exclusion list, which together with
-/// the global toggle forms the inherited default. Pure logic — no AppSettings/AX dependency.
+/// Computes the effective per-app policy with a clear precedence:
+/// 1. The global toggles are master switches — global completions off means off everywhere,
+///    global "Collect inputs" off means nothing is recorded anywhere.
+/// 2. Under an enabled global switch, an explicit per-app override wins over the legacy
+///    exclusion list (so a user can re-enable one excluded app).
+/// Pure logic — no AppSettings/AX dependency.
 enum AppPolicyResolver {
-    static func resolve(globalCompletionsEnabled: Bool, excludedByList: Bool, override: AppOverride?) -> ResolvedPolicy {
-        let inheritedCompletionsEnabled = globalCompletionsEnabled && !excludedByList
-        let completionsEnabled = override?.completionsEnabled ?? inheritedCompletionsEnabled
-        let tabKeyDisabled = override?.tabKeyDisabled ?? false
-        let styleInstruction = override?.styleInstruction
+    static func resolve(
+        globalCompletionsEnabled: Bool,
+        excludedByList: Bool,
+        override: AppOverride?,
+        globalRecordHistory: Bool = true
+    ) -> ResolvedPolicy {
+        let perAppCompletionsEnabled = perAppCompletionsEnabled(excludedByList: excludedByList, override: override)
         return ResolvedPolicy(
-            completionsEnabled: completionsEnabled,
-            tabKeyDisabled: tabKeyDisabled,
-            styleInstruction: styleInstruction
+            completionsEnabled: globalCompletionsEnabled && perAppCompletionsEnabled,
+            tabKeyDisabled: override?.tabKeyDisabled ?? false,
+            styleInstruction: override?.styleInstruction,
+            recordHistory: globalRecordHistory && (override?.recordHistory ?? true),
+            compatibilityMode: override?.compatibilityMode ?? false
         )
+    }
+
+    /// Whether this app is switched on in its own right, ignoring the global master switch — what
+    /// the status menu's "Turn Off/On Suggestions in ⟨App⟩" item and the ⌃⌥⌘` shortcut flip.
+    static func perAppCompletionsEnabled(excludedByList: Bool, override: AppOverride?) -> Bool {
+        override?.completionsEnabled ?? !excludedByList
     }
 }

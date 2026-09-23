@@ -90,4 +90,37 @@ import Foundation
             isHealthy: false, previousConsecutiveUnhealthyChecks: 4, hasOpenedFallbackSettings: true)
         #expect(decision == .init(consecutiveUnhealthyChecks: 5, shouldRecreate: true, shouldOpenFallbackSettings: false))
     }
+
+    // MARK: - B4: snooze choices
+
+    @Test func snoozeFifteenMinutesAndOneHour() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        #expect(StatusBarMenuLogic.SnoozeOption.fifteenMinutes.deadline(from: now, calendar: .current)
+                == now.addingTimeInterval(15 * 60))
+        #expect(StatusBarMenuLogic.SnoozeOption.oneHour.deadline(from: now, calendar: .current)
+                == now.addingTimeInterval(3600))
+    }
+
+    @Test func snoozeUntilTomorrowMorningIsEightAMNextDay() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
+        let lateEvening = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 23, hour: 23, minute: 30)))
+        let deadline = StatusBarMenuLogic.SnoozeOption.untilTomorrowMorning.deadline(from: lateEvening, calendar: calendar)
+        let expected = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 24, hour: 8)))
+        #expect(deadline == expected)
+    }
+
+    @Test func snoozeUntilTomorrowMorningFromJustAfterMidnightIsStillNextDay() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try #require(TimeZone(identifier: "UTC"))
+        let earlyMorning = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 24, hour: 0, minute: 10)))
+        let deadline = StatusBarMenuLogic.SnoozeOption.untilTomorrowMorning.deadline(from: earlyMorning, calendar: calendar)
+        let expected = try #require(calendar.date(from: DateComponents(year: 2026, month: 9, day: 25, hour: 8)))
+        #expect(deadline == expected)
+    }
+
+    @Test func snoozeTitles() {
+        #expect(StatusBarMenuLogic.SnoozeOption.allCases.map(\.title)
+                == ["Pause for 15 Minutes", "Pause for 1 Hour", "Pause Until Tomorrow Morning"])
+    }
 }
