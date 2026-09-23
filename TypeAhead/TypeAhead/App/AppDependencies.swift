@@ -191,12 +191,6 @@ final class AppDependencies {
         } else {
             currentPolicy = resolvePolicy(bundleID: nil)
         }
-        // B2: Escape asked for a short break from suggestions — honor it until it expires or
-        // the user reaches the next word boundary (see DismissCooldown).
-        if let cooldown = dismissCooldown {
-            if cooldown.isActive(now: Date()) { return }
-            dismissCooldown = nil
-        }
 
         // Focus hygiene: if the user moved to a different field since the last cycle, drop stale
         // context (buffer/overlay/in-flight generation) before building a new prompt — otherwise a
@@ -212,6 +206,13 @@ final class AppDependencies {
         if !AppInsertionPolicy.unreliableCaretBounds(forBundleID: frontBundleID, compatibilityMode: currentPolicy.compatibilityMode),
            accessibilityManager.focusedElementChanged() {
             handleFocusChange()
+        }
+        // B2: Escape asked for a short break from suggestions — honor it until it expires or the
+        // user reaches the next word boundary (see DismissCooldown). Checked after the field-switch
+        // reset above, which clears it: an Escape in one field shouldn't mute the next.
+        if let cooldown = dismissCooldown {
+            if cooldown.isActive(now: Date()) { return }
+            dismissCooldown = nil
         }
         // Stamp every suggestion shown this cycle (spell/emoji/ML) with the current epoch so it
         // can't be accepted after a later focus change lands it in the wrong field. Read fresh
