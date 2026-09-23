@@ -133,6 +133,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.statusBarMenu?.toggleFrontmostApp()
         }
 
+        // Word alternatives: ⌥↓ lists them, 1–3 inserts one, any other key closes the list.
+        deps.keyMonitor.canRequestAlternatives = { [weak deps] in deps?.canRequestWordAlternatives() ?? false }
+        deps.keyMonitor.onAlternativesRequested = { [weak deps] in
+            // Nothing to offer after all — give the swallowed ⌥↓ back to the app.
+            if deps?.requestWordAlternatives() == false {
+                deps?.accessibilityManager.injectKey(CGKeyCode(kVK_DownArrow), flags: .maskAlternate)
+            }
+        }
+        deps.keyMonitor.onAlternativeChosen = { [weak deps] index in deps?.chooseWordAlternative(at: index) }
+        deps.keyMonitor.onAlternativesClosed = { [weak deps] in deps?.closeWordAlternatives() }
+
         deps.keyMonitor.start()
 
         // One-time checks. If trusted is false → re-grant in System Settings. If a debugger
@@ -227,10 +238,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 deps.accessibilityManager.injectText(plan.insertion)
             }
-            // WS6: the field's text just changed under the cached KV prompt (the accepted text is
-            // now part of the typed text, not the model's continuation) — the next debounce fire
-            // must reprocess the prompt from scratch.
-            deps.inferenceEngine.invalidateCache()
+            // KV cache is deliberately KEPT here. Accepting appends text to the prompt exactly like
+            // typing does: the next `complete()` first trims the cache's generated-token tail back
+            // to the tracked prompt (WP-5 reconcile), then `PromptCacheValidity.decide` reuses it
+            // if the new prompt still starts with the cached tokens and rebuilds if the boundary
+            // re-tokenized differently. Dropping it forced a full re-prefill after every Tab.
 
             deps.keyMonitor.keystrokeBuffer.appendAccepted(plan.insertion)
             // A2: typing history is written only when "Collect inputs" (and this app's

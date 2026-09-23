@@ -33,6 +33,11 @@ struct GeneralView: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
+                Picker("English Spelling", selection: $s.englishVariant) {
+                    ForEach(EnglishVariant.allCases, id: \.self) { variant in
+                        Text(variant.displayName).tag(variant)
+                    }
+                }
                 Toggle("Mid-line Completions", isOn: $s.midLineCompletionsEnabled)
                 Text("Suggest even when there's text after the cursor on the same line.")
                     .font(.caption)
@@ -43,6 +48,7 @@ struct GeneralView: View {
                 Toggle("Add a Space After Accepted Words", isOn: $s.addSpaceAfterAcceptedWord)
                 LabeledContent("Accept next word", value: "Tab  or  ⌥→")
                 LabeledContent("Accept whole suggestion", value: "⇧Tab")
+                LabeledContent("Show word alternatives, then pick", value: "⌥↓, then 1–3")
                 LabeledContent("Type a normal Tab", value: "⌥Tab")
                 LabeledContent("Dismiss and pause briefly", value: "Esc")
                 LabeledContent("Turn on/off for current app", value: "⌃⌥⌘`")

@@ -67,7 +67,13 @@ KeyEventMonitor → CompletionPipeline → InferenceEngine
 
 ## Keyboard
 - Tab / ⌥→ accept the next word · ⇧Tab accepts the whole suggestion · ⌥Tab sends a plain Tab
+- ⌥↓ lists word alternatives, 1–3 picks one (`WordAlternatives`, `AlternativesPanel`)
 - Esc dismisses and pauses until the next word (`DismissCooldown`) · ⌃⌥⌘` toggles the current app · ⌃⌥⌘T opens the menu
+
+## Branches
+- Feature branches → PR into **`dev`**; merge to `dev` once `swift test` and the headless compile-check are green and review bots have no open findings.
+- **`main` only on the owner's explicit request, after they have tested `dev`.** Never merge to `main` on your own.
+- Delete merged branches (local + remote) once they're in `dev`/`main`.
 
 ## Entitlements Required
 - `com.apple.security.automation.apple-events`

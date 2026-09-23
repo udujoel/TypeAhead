@@ -31,6 +31,7 @@ private enum CompletionsChoice: String, CaseIterable, Identifiable {
 struct AppsView: View {
     @Environment(AppSettings.self) private var settings
     @State private var newBundleID = ""
+    @State private var newSite = ""
 
     private var sortedApps: [RegisteredApp] {
         settings.appRegistry.values.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
@@ -53,6 +54,31 @@ struct AppsView: View {
                 Text("Apps")
             } footer: {
                 Text("Apps are added here automatically the first time TypeAhead sees them. \u{201C}Default\u{201D} follows the global Completions toggle above and the legacy exclusions below.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                if settings.siteRules.isEmpty {
+                    Text("No website rules. Add a site to change suggestions there, e.g. turn them off on your bank.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(settings.siteRules.keys.sorted(), id: \.self) { domain in
+                        SiteRow(domain: domain)
+                    }
+                }
+                HStack(spacing: 8) {
+                    TextField("example.com", text: $newSite)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { addSite() }
+                    Button("Add") { addSite() }
+                        .disabled(SiteRules.normalizedDomain(newSite) == nil)
+                }
+            } header: {
+                Text("Websites")
+            } footer: {
+                Text("Rules for pages in Safari, Chrome, Arc, Firefox and other browsers. A site rule covers its subdomains and overrides the browser\u{2019}s own setting above. Only sites you add are stored.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -95,6 +121,16 @@ struct AppsView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Apps")
+    }
+
+    private func addSite() {
+        guard let domain = SiteRules.normalizedDomain(newSite) else { return }
+        // A new site starts as "Off" (the usual reason to add one); an existing rule is left
+        // exactly as it is — re-adding must never silently change it.
+        if settings.siteRules[domain] == nil {
+            settings.updateSiteRule(domain: domain) { $0.completionsEnabled = false }
+        }
+        newSite = ""
     }
 
     private func addBundleID() {
@@ -191,5 +227,77 @@ private struct AppRow: View {
 
     private func mutate(_ change: (inout AppOverride) -> Void) {
         settings.updateOverride(bundleID: bundleID, displayName: app.displayName, change)
+    }
+}
+
+/// One website rule: domain, completions Default/On/Off, Tab-accept and history toggles, a style
+/// instruction, and a remove button. Writes through `AppSettings.updateSiteRule`.
+private struct SiteRow: View {
+    @Environment(AppSettings.self) private var settings
+    let domain: String
+
+    private var rule: AppOverride { settings.siteRules[domain] ?? AppOverride() }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(domain)
+                Spacer()
+                Picker("", selection: Binding(
+                    get: { CompletionsChoice(rule.completionsEnabled) },
+                    set: { choice in edit { $0.completionsEnabled = choice.value } }
+                )) {
+                    ForEach(CompletionsChoice.allCases) { Text($0.label).tag($0) }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 180)
+                Button {
+                    settings.siteRules[domain] = nil
+                } label: {
+                    Image(systemName: "minus.circle.fill").foregroundStyle(.red.opacity(0.8))
+                }
+                .buttonStyle(.plain)
+                .help("Remove this website rule")
+            }
+            // Three-way, not toggles: for a site, "Default" means "same as the browser", and an
+            // explicit On/Off must be able to beat whatever the browser row says.
+            HStack(spacing: 16) {
+                triState("Tab accept", Binding(
+                    get: { CompletionsChoice(rule.tabKeyDisabled.map { !$0 }) },
+                    set: { choice in edit { $0.tabKeyDisabled = choice.value.map { !$0 } } }
+                ))
+                triState("Record history", Binding(
+                    get: { CompletionsChoice(rule.recordHistory) },
+                    set: { choice in edit { $0.recordHistory = choice.value } }
+                ))
+                .disabled(!settings.storeInputHistory)
+                .help(settings.storeInputHistory ? "" : "Turn on \u{201C}Collect inputs\u{201D} in Personalization first.")
+            }
+            .font(.caption)
+            TextField("Style instruction for this site", text: Binding(
+                get: { rule.styleInstruction ?? "" },
+                set: { value in edit { $0.styleInstruction = value.isEmpty ? nil : value } }
+            ))
+            .textFieldStyle(.roundedBorder)
+            .font(.caption)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func edit(_ change: (inout AppOverride) -> Void) {
+        settings.updateSiteRule(domain: domain, change)
+    }
+
+    private func triState(_ title: String, _ selection: Binding<CompletionsChoice>) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+            Picker(title, selection: selection) {
+                ForEach(CompletionsChoice.allCases) { Text($0.label).tag($0) }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(width: 150)
+        }
     }
 }

@@ -45,6 +45,12 @@ final class CompletionOverlay {
 
     // MARK: - Show / Update / Hide (inline — caret-anchored, backgroundless)
 
+    /// The ghost's on-screen frame while it's showing (inline or mirror) — where the word
+    /// alternatives list anchors.
+    var visibleFrame: NSRect? {
+        panel.isVisible && panel.alphaValue > 0 ? panel.frame : nil
+    }
+
     func show(text: String, near cursorRect: NSRect, fontSize: CGFloat) {
         label.font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
         label.stringValue = text

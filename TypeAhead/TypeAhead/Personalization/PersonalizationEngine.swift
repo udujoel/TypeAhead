@@ -63,7 +63,11 @@ final class PersonalizationEngine {
     ///   `CompletionLength.short`, maxWords == 1) gets its own sentence — "at least 2 and at
     ///   most 1 words" is self-contradictory — while every other value keeps the exact
     ///   byte-identical range sentence.
-    nonisolated static func baseInstruction(targetWords: Int) -> String {
+    ///
+    /// `britishSpelling` swaps one static sentence (it changes only when the setting does, so the
+    /// KV cache keyed on this instruction still reuses across keystrokes); false keeps the text
+    /// byte-identical to before the English-variant setting existed.
+    nonisolated static func baseInstruction(targetWords: Int, britishSpelling: Bool = false) -> String {
         let lengthSentence = targetWords < 2
             ? "Always continue with exactly one word that comes naturally, matching their "
             + "wording and style."
@@ -72,7 +76,10 @@ final class PersonalizationEngine {
         return "Continue the text the user is writing. " + lengthSentence + " If the "
         + "text ends in the middle of a word, first finish that exact word (output only its "
         + "remaining letters, with no space before them), then continue with the following "
-        + "words. Write only in English. Never reply with only punctuation, an ellipsis, or an "
+        + "words. " + (britishSpelling
+            ? "Write only in English, using British spelling (colour, organise, centre). "
+            : "Write only in English. ")
+        + "Never reply with only punctuation, an ellipsis, or an "
         + "empty line — always predict the most likely next words. Do not repeat words they "
         + "already completed, and do not add quotes, labels, or explanations."
     }
@@ -94,12 +101,15 @@ final class PersonalizationEngine {
     /// - Parameter targetWords: forwarded to `baseInstruction(targetWords:)` — see its doc
     ///   comment. Structural composition here (persona prefix, suffix hint) is unchanged from
     ///   before WP-B; only `baseInstruction`'s own text now varies with this value.
-    nonisolated static func buildInstruction(personaNote: String?, suffix: String = "", targetWords: Int) -> String {
+    nonisolated static func buildInstruction(
+        personaNote: String?, suffix: String = "", targetWords: Int, britishSpelling: Bool = false
+    ) -> String {
+        let core = baseInstruction(targetWords: targetWords, britishSpelling: britishSpelling)
         let base: String
         if let note = personaNote, !note.isEmpty {
-            base = "\(note)\n\n\(baseInstruction(targetWords: targetWords))"
+            base = "\(note)\n\n\(core)"
         } else {
-            base = baseInstruction(targetWords: targetWords)
+            base = core
         }
 
         let cappedSuffix = String(suffix.prefix(maxSuffixHintChars))

@@ -15,6 +15,11 @@ enum StatusBarMenuLogic {
         return isExcluded ? "Turn On Suggestions in \(name)" : "Turn Off Suggestions in \(name)"
     }
 
+    /// Title for the per-website item shown when a browser is in front.
+    static func perSiteItemTitle(domain: String, isEnabled: Bool) -> String {
+        isEnabled ? "Turn Off Suggestions on \(domain)" : "Turn On Suggestions on \(domain)"
+    }
+
     /// Whether suggestions are currently snoozed (a pause deadline exists and is still in the future).
     static func isPaused(pausedUntil: Date?, now: Date) -> Bool {
         guard let until = pausedUntil else { return false }
@@ -52,6 +57,13 @@ enum StatusBarMenuLogic {
     /// preference.
     static func effectiveEnabled(userEnabled: Bool, pausedUntil: Date?, now: Date) -> Bool {
         userEnabled && !isPaused(pausedUntil: pausedUntil, now: now)
+    }
+
+    /// Shown in the menu while macOS Secure Input is on. While it is, the system hides every
+    /// keystroke from other apps' event taps, so TypeAhead can't see typing and stays silent —
+    /// this tells the user why instead of looking broken.
+    static func secureInputNotice(isSecureInputOn: Bool) -> String? {
+        isSecureInputOn ? "Secure Input is on — suggestions paused until you leave the password field or app" : nil
     }
 
     /// One-line header describing engine readiness, e.g. "Gemma 4 E2B · Ready" / "… · Loading…".
