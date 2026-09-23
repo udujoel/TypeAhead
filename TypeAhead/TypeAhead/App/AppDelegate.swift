@@ -227,10 +227,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 deps.accessibilityManager.injectText(plan.insertion)
             }
-            // WS6: the field's text just changed under the cached KV prompt (the accepted text is
-            // now part of the typed text, not the model's continuation) — the next debounce fire
-            // must reprocess the prompt from scratch.
-            deps.inferenceEngine.invalidateCache()
+            // KV cache is deliberately KEPT here. Accepting appends text to the prompt exactly like
+            // typing does: the next `complete()` first trims the cache's generated-token tail back
+            // to the tracked prompt (WP-5 reconcile), then `PromptCacheValidity.decide` reuses it
+            // if the new prompt still starts with the cached tokens and rebuilds if the boundary
+            // re-tokenized differently. Dropping it forced a full re-prefill after every Tab.
 
             deps.keyMonitor.keystrokeBuffer.appendAccepted(plan.insertion)
             // A2: typing history is written only when "Collect inputs" (and this app's

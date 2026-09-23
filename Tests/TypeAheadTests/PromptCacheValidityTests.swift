@@ -79,4 +79,20 @@ struct PromptCacheValidityTests {
     func cacheOverflowZeroWhenEmpty() {
         #expect(PromptCacheValidity.cacheOverflow(cacheOffset: 0, trackedTokenCount: 0) == 0)
     }
+
+    @Test("Tab-accept: prompt + accepted tokens after trimming the generated tail -> reuse")
+    func tabAcceptReusesAfterTrim() {
+        // Cached prompt [1,2,3]; the model generated [7,8] (the ghost), so the cache offset is 5.
+        let prompt = [1, 2, 3]
+        #expect(PromptCacheValidity.cacheOverflow(cacheOffset: 5, trackedTokenCount: prompt.count) == 2)
+        // After trimming 2, the user accepts the first ghost word — it becomes typed text, so the
+        // next prompt is the old prompt plus those tokens: only they are prefilled.
+        #expect(PromptCacheValidity.decide(cachedTokens: prompt, newTokens: [1, 2, 3, 7]) == .reuse(deltaTokens: [7]))
+    }
+
+    @Test("Tab-accept that re-tokenizes the boundary (partial word merged) -> rebuild")
+    func tabAcceptRebuildsWhenBoundaryRetokenizes() {
+        // "Wri" was token 3; after accepting "ting", "Writing" is a single token 9.
+        #expect(PromptCacheValidity.decide(cachedTokens: [1, 2, 3], newTokens: [1, 2, 9]) == .rebuild)
+    }
 }
