@@ -9,16 +9,21 @@ enum WordAlternatives {
     /// Up to `limit` distinct single words from raw candidates, in order: trimmed, cut to their
     /// first word, trailing punctuation removed, empties and `excluding` (case-insensitive) dropped.
     static func rank(_ candidates: [String], excluding: String?, limit: Int) -> [String] {
-        var seen = Set(excluding.map { [$0.lowercased()] } ?? [])
+        var seen = Set(excluding.flatMap(cleanWord).map { [$0.lowercased()] } ?? [])
         var result: [String] = []
         for raw in candidates {
-            guard let word = firstWord(ofGhost: raw) else { continue }
-            let cleaned = String(word.reversed().drop { $0.isPunctuation }.reversed())
-            guard !cleaned.isEmpty, seen.insert(cleaned.lowercased()).inserted else { continue }
+            guard let cleaned = cleanWord(raw), seen.insert(cleaned.lowercased()).inserted else { continue }
             result.append(cleaned)
             if result.count == limit { break }
         }
         return result
+    }
+
+    /// First word with trailing punctuation removed ("meeting." → "meeting"), or nil if nothing's left.
+    static func cleanWord(_ text: String) -> String? {
+        guard let word = firstWord(ofGhost: text) else { return nil }
+        let cleaned = String(word.reversed().drop { $0.isPunctuation }.reversed())
+        return cleaned.isEmpty ? nil : cleaned
     }
 
     /// The first word of a ghost (without its leading space), or nil when it has none.

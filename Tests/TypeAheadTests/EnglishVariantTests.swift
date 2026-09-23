@@ -7,9 +7,10 @@ import Testing
 @Suite struct EnglishVariantTests {
 
     @Test func spellCheckerLanguagePerVariant() {
-        #expect(EnglishVariant.automatic.spellCheckerLanguage(systemLanguage: "en_AU") == "en_AU")
-        #expect(EnglishVariant.american.spellCheckerLanguage(systemLanguage: "en_GB") == "en")
-        #expect(EnglishVariant.british.spellCheckerLanguage(systemLanguage: "en") == "en_GB")
+        // Automatic forces nothing, so macOS's own (possibly auto-detected) language applies.
+        #expect(EnglishVariant.automatic.spellCheckerLanguage == nil)
+        #expect(EnglishVariant.american.spellCheckerLanguage == "en")
+        #expect(EnglishVariant.british.spellCheckerLanguage == "en_GB")
     }
 
     @Test func britishSpellingPerVariant() {

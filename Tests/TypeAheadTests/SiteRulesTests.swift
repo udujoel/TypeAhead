@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import TypeAhead
 
@@ -61,6 +62,20 @@ import Testing
     @Test func layeringOverNothingKeepsSiteFields() {
         let site = AppOverride(recordHistory: false)
         #expect(site.layered(over: nil) == site)
+    }
+
+    // MARK: - Host lookup cache
+
+    @Test func hostCacheFreshOnlyForSameAppEpochAndWithinTTL() {
+        let t0 = Date(timeIntervalSinceReferenceDate: 100)
+        #expect(SiteRules.isHostCacheFresh(cachedBundleID: "com.apple.Safari", cachedEpoch: 3, cachedAt: t0,
+                                           bundleID: "com.apple.Safari", epoch: 3, now: t0.addingTimeInterval(4)))
+        #expect(!SiteRules.isHostCacheFresh(cachedBundleID: "com.apple.Safari", cachedEpoch: 3, cachedAt: t0,
+                                            bundleID: "com.apple.Safari", epoch: 3, now: t0.addingTimeInterval(5)))
+        #expect(!SiteRules.isHostCacheFresh(cachedBundleID: "com.apple.Safari", cachedEpoch: 3, cachedAt: t0,
+                                            bundleID: "com.apple.Safari", epoch: 4, now: t0))
+        #expect(!SiteRules.isHostCacheFresh(cachedBundleID: "com.apple.Safari", cachedEpoch: 3, cachedAt: t0,
+                                            bundleID: "com.google.Chrome", epoch: 3, now: t0))
     }
 
     // MARK: - Browsers

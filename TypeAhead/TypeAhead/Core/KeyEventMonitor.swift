@@ -87,7 +87,10 @@ final class KeyEventMonitor {
     /// ⌥Tab while a ghost shows — a plain Tab was passed through; drop the ghost (B1).
     var onTabPassthrough: (() -> Void)?
     var onDismiss: (() -> Void)?
-    /// ⌥↓ while a ghost shows — list alternatives for its first word.
+    /// Whether ⌥↓ should be claimed for word alternatives right now (an ML ghost is showing).
+    /// Checked synchronously in the tap, so it must stay cheap.
+    var canRequestAlternatives: (() -> Bool)?
+    /// ⌥↓ while an ML ghost shows — list alternatives for its first word.
     var onAlternativesRequested: (() -> Void)?
     /// 1–3 while alternatives show — the chosen index (0-based).
     var onAlternativeChosen: ((Int) -> Void)?
@@ -247,7 +250,8 @@ final class KeyEventMonitor {
 
         // ⌥↓ with a ghost showing — open word alternatives (swallowed so the app doesn't move
         // the cursor to the end of the paragraph).
-        if keyCode == CGKeyCode(kVK_DownArrow), mods == .maskAlternate, isOverlayVisible {
+        if keyCode == CGKeyCode(kVK_DownArrow), mods == .maskAlternate, isOverlayVisible,
+           canRequestAlternatives?() == true {
             Task { @MainActor [weak self] in self?.onAlternativesRequested?() }
             return nil
         }

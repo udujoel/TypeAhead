@@ -15,10 +15,12 @@ enum EnglishVariant: String, CaseIterable, Sendable {
         }
     }
 
-    /// The `NSSpellChecker` language to use. `"en"` is macOS's American English dictionary.
-    func spellCheckerLanguage(systemLanguage: String) -> String {
+    /// The `NSSpellChecker` language to force, or nil for Automatic — which leaves the checker's
+    /// own language handling alone (including macOS "Automatic by Language" detection).
+    /// `"en"` is macOS's American English dictionary.
+    var spellCheckerLanguage: String? {
         switch self {
-        case .automatic: systemLanguage
+        case .automatic: nil
         case .american: "en"
         case .british: "en_GB"
         }

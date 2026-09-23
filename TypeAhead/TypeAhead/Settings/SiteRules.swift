@@ -31,6 +31,16 @@ enum SiteRules {
             .max { $0.count < $1.count }
     }
 
+    /// How long a looked-up page host is trusted. Browsers are Chromium/WebKit apps whose in-app
+    /// field switches don't always bump the focus epoch, so a short TTL catches navigation too.
+    static let hostCacheTTL: TimeInterval = 5
+
+    /// Whether a cached page host still applies: same app, same focus epoch, younger than the TTL.
+    static func isHostCacheFresh(cachedBundleID: String, cachedEpoch: Int, cachedAt: Date,
+                                 bundleID: String, epoch: Int, now: Date) -> Bool {
+        cachedBundleID == bundleID && cachedEpoch == epoch && now.timeIntervalSince(cachedAt) < hostCacheTTL
+    }
+
     /// Bundle-ID prefixes of web browsers — the only apps whose page URL is looked up.
     static func isBrowser(bundleID: String) -> Bool {
         browserPrefixes.contains { bundleID.hasPrefix($0) }

@@ -56,6 +56,13 @@ final class AppDependencies {
     private var alternativesRequestID = 0
     private var alternativesPartialWord = ""
     private var lastInference: InferenceRequest?
+    /// True while the ML suggestion is still generating — word alternatives wait for it rather than
+    /// cancel it (which would freeze the ghost mid-word).
+    private var mainGenerationInFlight = false
+    private var alternativesSamplingInFlight = false
+    /// #6: the focused page's host, cached per app + focus epoch for a few seconds — the AX walk
+    /// that finds it is too slow to repeat on every keystroke.
+    private var siteHostCache: (bundleID: String, epoch: Int, at: Date, host: String?)?
 
     /// B2: set when Escape dismisses a ghost; while active, `runCompletion` shows nothing.
     var dismissCooldown: DismissCooldown?
@@ -81,7 +88,17 @@ final class AppDependencies {
     /// user has added a site rule and a browser is in front.
     func currentSiteDomain(bundleID: String) -> String? {
         guard !settings.siteRules.isEmpty, SiteRules.isBrowser(bundleID: bundleID) else { return nil }
-        return SiteRules.matchingDomain(host: accessibilityManager.focusedWebHost(), in: settings.siteRules.keys)
+        let now = Date()
+        let host: String?
+        if let cached = siteHostCache,
+           SiteRules.isHostCacheFresh(cachedBundleID: cached.bundleID, cachedEpoch: cached.epoch, cachedAt: cached.at,
+                                      bundleID: bundleID, epoch: focusEpoch.epoch, now: now) {
+            host = cached.host
+        } else {
+            host = accessibilityManager.focusedWebHost()
+            siteHostCache = (bundleID, focusEpoch.epoch, now, host)
+        }
+        return SiteRules.matchingDomain(host: host, in: settings.siteRules.keys)
     }
 
     init() {
@@ -132,6 +149,7 @@ final class AppDependencies {
         focusEpoch.focusChanged()
         dismissCooldown = nil  // an Escape in the previous field shouldn't mute the new one
         closeWordAlternatives()
+        siteHostCache = nil
         // WP-5 (P1): drop the screen-context OCR cache on every focus change (app switch or
         // in-field switch) rather than relying solely on the TTL below. This is the actual
         // "new field/app gets fresh context" guarantee; the TTL just bounds how stale a
@@ -270,7 +288,7 @@ final class AppDependencies {
         // English variant: the dictionary used by the spell/word-completion fast paths below and
         // the spelling sentence of the model instruction come from one setting, so they agree.
         let systemSpellLanguage = NSSpellChecker.shared.language()
-        let spellLanguage = settings.englishVariant.spellCheckerLanguage(systemLanguage: systemSpellLanguage)
+        let spellLanguage = settings.englishVariant.spellCheckerLanguage
         let britishSpelling = settings.englishVariant.usesBritishSpelling(systemLanguage: systemSpellLanguage)
 
         // Read the text around the cursor. Prefer the Accessibility API (full
@@ -527,6 +545,7 @@ final class AppDependencies {
             // output hygiene. The retry already pays a full prefill regardless (see `complete`'s
             // doc comment on `temperature`), so a different instruction adds no extra cache cost.
             let isRetry = attempt > 0
+            mainGenerationInFlight = true
             if !isRetry {
                 lastInference = InferenceRequest(prompt: prompt, suffix: suffix, personaNote: personaNote,
                                                  maxWords: settings.completionLength.maxWords,
@@ -589,6 +608,7 @@ final class AppDependencies {
                 // before touching any AppDependencies state.
                 Task { @MainActor [weak self] in
                     guard let self else { return }
+                    mainGenerationInFlight = false  // a retry below sets it again
                     guard CompletionCoordinator.shouldRetryGeneration(
                         attempt: attempt, producedUsableGhost: outcome.producedUsableGhost
                     ) else { return }
@@ -684,41 +704,69 @@ struct InferenceRequest {
 }
 
 extension AppDependencies {
+    /// Cheap check for the key tap: is an ML ghost showing that alternatives could apply to?
+    /// (Spell-fix and emoji ghosts have none, so ⌥↓ must reach the app for them.)
+    func canRequestWordAlternatives() -> Bool {
+        guard case .mlCompletion(let ghost, let epoch) = overlayController.mode else { return false }
+        return focusEpoch.mayAccept(stampedEpoch: epoch) && WordAlternatives.firstWord(ofGhost: ghost) != nil
+    }
+
     /// ⌥↓ on a visible ML ghost: list up to three other choices for its first word. A mid-word
     /// ghost gets dictionary completions of the partial word (instant); a new-word ghost gets extra
-    /// samples of the same prompt from the model, shown as they arrive.
-    func requestWordAlternatives() {
-        guard case .mlCompletion(let ghost, let epoch) = overlayController.mode,
-              focusEpoch.mayAccept(stampedEpoch: epoch),
-              let firstWord = WordAlternatives.firstWord(ofGhost: ghost) else { return }
-        let caret = accessibilityManager.inlineCursorRect() ?? NSRect(origin: NSEvent.mouseLocation, size: .zero)
+    /// samples of the same prompt from the model, shown as they arrive. Returns false when there's
+    /// nothing to offer, so the caller can hand ⌥↓ back to the app.
+    @discardableResult
+    func requestWordAlternatives() -> Bool {
+        guard canRequestWordAlternatives(), case .mlCompletion(let ghost, _) = overlayController.mode,
+              let firstWord = WordAlternatives.firstWord(ofGhost: ghost) else { return false }
         alternativesRequestID += 1
         let requestID = alternativesRequestID
 
         let partial = ghost.hasPrefix(" ") ? "" : (currentPartialWord() ?? "")
         alternativesPartialWord = partial
-        keyMonitor.isAlternativesVisible = true
 
         if !partial.isEmpty {
-            let language = settings.englishVariant.spellCheckerLanguage(systemLanguage: NSSpellChecker.shared.language())
             let words = WordAlternatives.rank(
-                WordCompleter.completions(forPartial: partial, language: language, limit: 12),
+                WordCompleter.completions(forPartial: partial, language: settings.englishVariant.spellCheckerLanguage, limit: 12),
                 excluding: partial + firstWord, limit: 3)
-            guard !words.isEmpty else { closeWordAlternatives(); return }
-            alternativesPanel.show(words: words, below: caret)
-            return
+            guard !words.isEmpty else { return false }
+            keyMonitor.isAlternativesVisible = true
+            alternativesPanel.show(words: words, below: alternativesAnchor())
+            return true
         }
 
-        guard let request = lastInference, inferenceEngine.isLoaded else { closeWordAlternatives(); return }
-        alternativesPanel.show(words: [], below: caret)
-        sampleAlternative(round: 0, requestID: requestID, excluding: firstWord, caret: caret,
-                          request: request, collected: AlternativeSamples())
+        guard lastInference != nil, inferenceEngine.isLoaded else { return false }
+        keyMonitor.isAlternativesVisible = true
+        alternativesPanel.show(words: [], below: alternativesAnchor())
+        // Let a suggestion that's still streaming finish first — cancelling it would freeze the
+        // ghost mid-word. Capped so an abandoned generation can't block the list forever.
+        Task { @MainActor [weak self] in
+            for _ in 0..<30 {
+                guard let self, self.mainGenerationInFlight else { break }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            guard let self, requestID == self.alternativesRequestID, self.alternativesPanel.isVisible,
+                  case .mlCompletion(let finalGhost, _) = self.overlayController.mode,
+                  let finalFirst = WordAlternatives.firstWord(ofGhost: finalGhost),
+                  let request = self.lastInference else { return }
+            self.sampleAlternative(round: 0, requestID: requestID, excluding: finalFirst,
+                                   request: request, collected: AlternativeSamples())
+        }
+        return true
+    }
+
+    /// Where the list goes: under the ghost itself (inline or mirror), else the caret, else the mouse.
+    private func alternativesAnchor() -> NSRect {
+        completionOverlay.visibleFrame
+            ?? accessibilityManager.inlineCursorRect()
+            ?? NSRect(origin: NSEvent.mouseLocation, size: .zero)
     }
 
     /// One extra model sample; chains up to four rounds until three distinct words are found.
-    private func sampleAlternative(round: Int, requestID: Int, excluding firstWord: String, caret: NSRect,
+    private func sampleAlternative(round: Int, requestID: Int, excluding firstWord: String,
                                    request: InferenceRequest, collected: AlternativeSamples) {
         let latest = SampleText()
+        alternativesSamplingInFlight = true
         // Same instruction as the original suggestion (same persona, suffix, and word target), so
         // the prompt tokens are identical and the engine replays its cache instead of re-prefilling.
         inferenceEngine.complete(
@@ -734,12 +782,13 @@ extension AppDependencies {
         } onComplete: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, requestID == self.alternativesRequestID, self.alternativesPanel.isVisible else { return }
+                self.alternativesSamplingInFlight = false
                 if !latest.value.isEmpty { collected.samples.append(latest.value) }
                 let words = WordAlternatives.rank(collected.samples, excluding: firstWord, limit: 3)
-                if !words.isEmpty { self.alternativesPanel.show(words: words, below: caret) }
+                if !words.isEmpty { self.alternativesPanel.show(words: words, below: self.alternativesAnchor()) }
                 if words.count < 3 && round < 3 {
                     self.sampleAlternative(round: round + 1, requestID: requestID, excluding: firstWord,
-                                           caret: caret, request: request, collected: collected)
+                                           request: request, collected: collected)
                 } else if words.isEmpty {
                     self.closeWordAlternatives()
                 }
@@ -775,6 +824,12 @@ extension AppDependencies {
 
     func closeWordAlternatives() {
         alternativesRequestID += 1  // stops any sampling still in flight from updating the list
+        // CLAUDE.md: cancel inference on any non-Tab keystroke — including the keys that choose
+        // or close the list. Only sampling is cancelled; a main suggestion is never in flight here.
+        if alternativesSamplingInFlight {
+            inferenceEngine.cancelCurrent()
+            alternativesSamplingInFlight = false
+        }
         keyMonitor.isAlternativesVisible = false
         alternativesPanel.hide()
     }

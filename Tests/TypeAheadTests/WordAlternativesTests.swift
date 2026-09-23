@@ -21,6 +21,11 @@ import Testing
         #expect(WordAlternatives.rank(["next week", "tomorrow morning"], excluding: nil, limit: 3) == ["next", "tomorrow"])
     }
 
+    @Test func excludedWordIsMatchedWithoutItsPunctuation() {
+        // Ghost " meeting." must not list "meeting" as its own alternative.
+        #expect(WordAlternatives.rank([" meeting,", "call"], excluding: "meeting.", limit: 3) == ["call"])
+    }
+
     @Test func respectsLimit() {
         #expect(WordAlternatives.rank(["a1", "b1", "c1", "d1"], excluding: nil, limit: 2) == ["a1", "b1"])
     }

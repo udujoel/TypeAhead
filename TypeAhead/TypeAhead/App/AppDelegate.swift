@@ -134,7 +134,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         // Word alternatives: ⌥↓ lists them, 1–3 inserts one, any other key closes the list.
-        deps.keyMonitor.onAlternativesRequested = { [weak deps] in deps?.requestWordAlternatives() }
+        deps.keyMonitor.canRequestAlternatives = { [weak deps] in deps?.canRequestWordAlternatives() ?? false }
+        deps.keyMonitor.onAlternativesRequested = { [weak deps] in
+            // Nothing to offer after all — give the swallowed ⌥↓ back to the app.
+            if deps?.requestWordAlternatives() == false {
+                deps?.accessibilityManager.injectKey(CGKeyCode(kVK_DownArrow), flags: .maskAlternate)
+            }
+        }
         deps.keyMonitor.onAlternativeChosen = { [weak deps] index in deps?.chooseWordAlternative(at: index) }
         deps.keyMonitor.onAlternativesClosed = { [weak deps] in deps?.closeWordAlternatives() }
 

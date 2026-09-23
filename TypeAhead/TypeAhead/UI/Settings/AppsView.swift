@@ -124,9 +124,13 @@ struct AppsView: View {
     }
 
     private func addSite() {
-        if settings.updateSiteRule(domain: newSite, { $0.completionsEnabled = false }) {
-            newSite = ""
+        guard let domain = SiteRules.normalizedDomain(newSite) else { return }
+        // A new site starts as "Off" (the usual reason to add one); an existing rule is left
+        // exactly as it is — re-adding must never silently change it.
+        if settings.siteRules[domain] == nil {
+            settings.updateSiteRule(domain: domain) { $0.completionsEnabled = false }
         }
+        newSite = ""
     }
 
     private func addBundleID() {
@@ -256,16 +260,19 @@ private struct SiteRow: View {
                 .buttonStyle(.plain)
                 .help("Remove this website rule")
             }
+            // Three-way, not toggles: for a site, "Default" means "same as the browser", and an
+            // explicit On/Off must be able to beat whatever the browser row says.
             HStack(spacing: 16) {
-                Toggle("Disable Tab accept", isOn: Binding(
-                    get: { rule.tabKeyDisabled ?? false },
-                    set: { value in edit { $0.tabKeyDisabled = value ? true : nil } }
+                triState("Tab accept", Binding(
+                    get: { CompletionsChoice(rule.tabKeyDisabled.map { !$0 }) },
+                    set: { choice in edit { $0.tabKeyDisabled = choice.value.map { !$0 } } }
                 ))
-                Toggle("Record typing history", isOn: Binding(
-                    get: { settings.storeInputHistory && (rule.recordHistory ?? true) },
-                    set: { value in edit { $0.recordHistory = value ? nil : false } }
+                triState("Record history", Binding(
+                    get: { CompletionsChoice(rule.recordHistory) },
+                    set: { choice in edit { $0.recordHistory = choice.value } }
                 ))
                 .disabled(!settings.storeInputHistory)
+                .help(settings.storeInputHistory ? "" : "Turn on \u{201C}Collect inputs\u{201D} in Personalization first.")
             }
             .font(.caption)
             TextField("Style instruction for this site", text: Binding(
@@ -280,5 +287,17 @@ private struct SiteRow: View {
 
     private func edit(_ change: (inout AppOverride) -> Void) {
         settings.updateSiteRule(domain: domain, change)
+    }
+
+    private func triState(_ title: String, _ selection: Binding<CompletionsChoice>) -> some View {
+        HStack(spacing: 6) {
+            Text(title)
+            Picker(title, selection: selection) {
+                ForEach(CompletionsChoice.allCases) { Text($0.label).tag($0) }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(width: 150)
+        }
     }
 }

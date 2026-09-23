@@ -14,10 +14,12 @@ enum TypoDetector {
     /// - Parameter language: `NSSpellChecker` language (the English-variant setting); nil = the
     ///   checker's own current language.
     static func check(word: String, language: String? = nil) -> TypoFix? {
-        let language = language ?? checker.language()
         guard word.count > 1 else { return nil }
-        let range = checker.checkSpelling(
-            of: word, startingAt: 0, language: language, wrap: false, inSpellDocumentWithTag: 0, wordCount: nil)
+        // nil = let macOS pick (keeps "Automatic by Language" detection working).
+        let range = language.map {
+            checker.checkSpelling(of: word, startingAt: 0, language: $0, wrap: false, inSpellDocumentWithTag: 0, wordCount: nil)
+        } ?? checker.checkSpelling(of: word, startingAt: 0)
+        let language = language ?? checker.language()
         guard range.location != NSNotFound else { return nil }
         guard let guesses = checker.guesses(
             forWordRange: range,

@@ -133,29 +133,15 @@ final class AccessibilityManager {
         return TextContext(textBeforeCursor: before, textAfterCursor: after, appName: appName, windowTitle: windowTitle)
     }
 
-    /// The host of the web page that owns keyboard focus in a browser, or nil. Walks up from the
-    /// focused element to the web area that reports `AXURL` (Safari, Chromium), falling back to the
-    /// focused window's `AXDocument`. Only called for browsers, and only when site rules exist.
+    /// The host of the TOP-LEVEL web page that owns keyboard focus in a browser, or nil — never an
+    /// embedded frame's, so a rule for the page also covers a login/payment form it embeds from
+    /// another domain. Tries the focused window's `AXDocument` first (one call; the page URL in
+    /// Safari), then walks up from the focused element keeping the OUTERMOST web area's `AXURL`.
+    /// Callers cache the result (`AppDependencies.currentSiteDomain`) — the walk is not cheap.
     func focusedWebHost() -> String? {
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         AXUIElementSetMessagingTimeout(appElement, 0.5)
-        var focusedRef: CFTypeRef?
-        if AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
-           let focused = focusedRef {
-            var element = focused as! AXUIElement
-            for _ in 0..<40 {
-                var urlRef: CFTypeRef?
-                if AXUIElementCopyAttributeValue(element, "AXURL" as CFString, &urlRef) == .success,
-                   let url = urlRef as? URL, let host = url.host(), !host.isEmpty {
-                    return host
-                }
-                var parentRef: CFTypeRef?
-                guard AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parentRef) == .success,
-                      let parent = parentRef else { break }
-                element = parent as! AXUIElement
-            }
-        }
         var windowRef: CFTypeRef?
         if AXUIElementCopyAttributeValue(appElement, kAXFocusedWindowAttribute as CFString, &windowRef) == .success,
            let window = windowRef,
@@ -163,7 +149,23 @@ final class AccessibilityManager {
            let host = URL(string: document)?.host(), !host.isEmpty {
             return host
         }
-        return nil
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+              let focused = focusedRef else { return nil }
+        var element = focused as! AXUIElement
+        var outermostHost: String?
+        for _ in 0..<40 {
+            var urlRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(element, "AXURL" as CFString, &urlRef) == .success,
+               let url = urlRef as? URL, let host = url.host(), !host.isEmpty {
+                outermostHost = host  // keep climbing: an outer web area is the real page
+            }
+            var parentRef: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, kAXParentAttribute as CFString, &parentRef) == .success,
+                  let parent = parentRef else { break }
+            element = parent as! AXUIElement
+        }
+        return outermostHost
     }
 
     func insertCompletion(_ text: String, into element: AXUIElement) {
