@@ -206,17 +206,21 @@ final class StatusBarMenu: NSObject, NSMenuDelegate {
             menu.addItem(resumeItem)
             menu.addItem(disabledItem("Paused until \(Self.timeFormatter.string(from: until))"))
         } else if settings.completionsEnabled {
-            let pauseItem = NSMenuItem(title: "Pause for 1 Hour",
-                                       action: #selector(pauseForOneHour),
-                                       keyEquivalent: "")
-            pauseItem.target = self
-            menu.addItem(pauseItem)
+            for option in StatusBarMenuLogic.SnoozeOption.allCases {
+                let pauseItem = NSMenuItem(title: option.title,
+                                           action: #selector(pause(_:)),
+                                           keyEquivalent: "")
+                pauseItem.target = self
+                pauseItem.representedObject = option
+                menu.addItem(pauseItem)
+            }
         }
 
-        // — Per-app exclusion (only when a real foreground app is targetable) —
+        // — Per-app on/off (only when a real foreground app is targetable) — reflects and edits
+        // the same per-app override the Settings → Apps pane shows (A9).
         if let (appName, bundleID) = frontmostTargetApp() {
-            let excluded = settings.exceptionList.isExcluded(bundleID: bundleID)
-            if let title = StatusBarMenuLogic.perAppItemTitle(appName: appName, isExcluded: excluded) {
+            let enabled = perAppEnabled(bundleID: bundleID)
+            if let title = StatusBarMenuLogic.perAppItemTitle(appName: appName, isExcluded: !enabled) {
                 menu.addItem(.separator())
                 let appItem = NSMenuItem(title: title, action: #selector(toggleCurrentApp), keyEquivalent: "")
                 appItem.target = self
@@ -238,10 +242,8 @@ final class StatusBarMenu: NSObject, NSMenuDelegate {
         settingsItem.target = self
         menu.addItem(settingsItem)
 
-        // "Check for Updates" is wired to Sparkle once the framework is linked.
-        let updateItem = NSMenuItem(title: "Check for Updates…", action: nil, keyEquivalent: "")
-        updateItem.isEnabled = false
-        menu.addItem(updateItem)
+        // A8: no "Check for Updates…" item until Sparkle is actually linked — a permanently
+        // greyed-out item is a control that does nothing.
 
         menu.addItem(.separator())
 
@@ -303,10 +305,12 @@ final class StatusBarMenu: NSObject, NSMenuDelegate {
         applyEnabledState()
     }
 
-    @objc private func pauseForOneHour() {
-        pausedUntil = Date().addingTimeInterval(3600)
+    @objc private func pause(_ sender: NSMenuItem) {
+        guard let option = sender.representedObject as? StatusBarMenuLogic.SnoozeOption else { return }
+        let until = option.deadline(from: Date(), calendar: .current)
+        pausedUntil = until
         pauseTimer?.invalidate()
-        pauseTimer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: false) { [weak self] _ in
+        pauseTimer = Timer.scheduledTimer(withTimeInterval: max(1, until.timeIntervalSinceNow), repeats: false) { [weak self] _ in
             Task { @MainActor in self?.resumeSuggestions() }
         }
         applyEnabledState()
@@ -318,14 +322,35 @@ final class StatusBarMenu: NSObject, NSMenuDelegate {
     }
 
     @objc private func toggleCurrentApp(_ sender: NSMenuItem) {
-        guard let bundleID = sender.representedObject as? String else { return }
-        var list = settings.exceptionList
-        if list.isExcluded(bundleID: bundleID) {
-            list.remove(bundleID: bundleID)
-        } else {
-            list.add(bundleID: bundleID)
+        guard let bundleID = sender.representedObject as? String,
+              let (name, _) = frontmostTargetApp() else { return }
+        setPerApp(bundleID: bundleID, displayName: name, enabled: !perAppEnabled(bundleID: bundleID))
+    }
+
+    /// B3: the ⌃⌥⌘` shortcut — flip completions for whatever app is in front, with a brief HUD so
+    /// the change is visible (there's no menu open to show it).
+    func toggleFrontmostApp() {
+        guard let (name, bundleID) = frontmostTargetApp() else { return }
+        let enabled = !perAppEnabled(bundleID: bundleID)
+        setPerApp(bundleID: bundleID, displayName: name, enabled: enabled)
+        ToastHUD.show(enabled ? "Suggestions on in \(name)" : "Suggestions off in \(name)")
+    }
+
+    /// Whether the app is switched on in its own right (ignoring the global switch and snooze).
+    private func perAppEnabled(bundleID: String) -> Bool {
+        AppPolicyResolver.perAppCompletionsEnabled(
+            excludedByList: settings.exceptionList.isExcluded(bundleID: bundleID),
+            override: settings.appRegistry[bundleID]?.override
+        )
+    }
+
+    private func setPerApp(bundleID: String, displayName: String, enabled: Bool) {
+        settings.updateOverride(bundleID: bundleID, displayName: displayName) { $0.completionsEnabled = enabled }
+        if !enabled {
+            // Don't leave a ghost from this app on screen after switching it off.
+            AppDependencies.shared.overlayController.hide(animated: false)
+            AppDependencies.shared.inferenceEngine.cancelCurrent()
         }
-        settings.exceptionList = list   // triggers the didSet persist
     }
 
     @objc private func selectLength(_ sender: NSMenuItem) {

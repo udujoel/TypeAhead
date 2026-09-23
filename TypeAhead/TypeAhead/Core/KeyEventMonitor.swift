@@ -77,9 +77,15 @@ final class KeyEventMonitor {
     // MARK: Callbacks wired up by AppDelegate
 
     var onKeystroke: ((NSEvent) -> Void)?
+    /// Tab while a ghost shows — accept the next word.
     var onTabPressed: (() -> Void)?
+    /// Shift+Tab while a ghost shows — accept the whole suggestion (A7).
     var onShiftTabPressed: (() -> Void)?
+    /// ⌥Tab while a ghost shows — a plain Tab was passed through; drop the ghost (B1).
+    var onTabPassthrough: (() -> Void)?
     var onDismiss: (() -> Void)?
+    /// Global ⌃⌥⌘` — toggle completions for the frontmost app (B3).
+    var onToggleCurrentApp: (() -> Void)?
     /// Fired on the global ⌃⌥⌘T shortcut — opens the status menu even when its menu-bar icon
     /// is hidden (notch overflow), so the app is always reachable.
     var onShowMenu: (() -> Void)?
@@ -210,8 +216,24 @@ final class KeyEventMonitor {
             return nil  // swallowed — the target app never sees this combo
         }
 
+        // Global ⌃⌥⌘` (the key above Tab) — toggle completions for the frontmost app, the same
+        // chord Cotypist uses. Same exact-modifier rule as ⌃⌥⌘T above.
+        if keyCode == CGKeyCode(kVK_ANSI_Grave), menuMods == [.maskControl, .maskAlternate, .maskCommand] {
+            Task { @MainActor [weak self] in self?.onToggleCurrentApp?() }
+            return nil
+        }
+
         // Tab — swallow and accept completion when overlay is up.
         if keyCode == CGKeyCode(kVK_Tab) {
+            // B1 (Cotypist parity): ⌥Tab is the escape hatch — it sends an ordinary Tab (indent,
+            // next field) instead of accepting, and dismisses the ghost. Strip the Option flag so
+            // the app sees a plain Tab rather than its own ⌥Tab binding.
+            let tabMods = event.flags.intersection([.maskShift, .maskCommand, .maskControl, .maskAlternate])
+            if isOverlayVisible && tabMods == .maskAlternate {
+                event.flags = event.flags.subtracting(.maskAlternate)
+                Task { @MainActor [weak self] in self?.onTabPassthrough?() }
+                return Unmanaged.passRetained(event)
+            }
             if isOverlayVisible {
                 let shifted = event.flags.contains(.maskShift)
                 // Defer the accept: inserting text does AX / CGEvent work that's too slow to
@@ -262,6 +284,9 @@ final class KeyEventMonitor {
     private func handleLocal(event: NSEvent) -> NSEvent? {
         switch event.keyCode {
         case UInt16(kVK_Tab):
+            // A11: only claim Tab when a ghost is showing — otherwise Tab must keep moving focus
+            // between fields in TypeAhead's own Settings window.
+            guard isOverlayVisible else { return event }
             if event.modifierFlags.contains(.shift) { onShiftTabPressed?() }
             else { onTabPressed?() }
             return nil

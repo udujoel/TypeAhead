@@ -15,7 +15,8 @@ import Foundation
 @MainActor
 final class CompletionPipeline {
     private var debounceTask: Task<Void, Never>?
-    private let debounceInterval: TimeInterval
+    /// Live-adjustable (A6): `AppDependencies` keeps this in sync with the Trigger Delay slider.
+    var debounceInterval: TimeInterval
     private let maxWait: TimeInterval
     private var lastFire: Date = .distantPast
     var isEnabled: Bool
