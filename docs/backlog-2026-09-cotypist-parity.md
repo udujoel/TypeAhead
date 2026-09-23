@@ -111,11 +111,32 @@ classifier on real password/OTP boxes.
 - One commit per item or tight group, then one PR to `main`.
 - Runtime behavior the owner should confirm is listed in the PR's "Owner dogfood checklist".
 
-## Deferred (documented, not in scope for this backlog)
+## Round 2 — the previously deferred items
 
-- **Per-domain rules in browsers** (needs AXURL reads per browser; runtime-validation heavy).
-- **Word alternatives** (Cotypist Labs: numbered alternatives list; needs n-best generation + new overlay mode).
-- **Secure Input notification** (when another app holds Secure Event Input, the tap sees nothing).
-- **Sparkle auto-update + notarized DMG** (needs the owner's Developer ID + hosting).
-- **Keep the KV cache across a Tab-accept** (accepted text = generated tokens; needs model-runtime validation).
-- **British English / RTL scripts.**
+Branch `feature/deferred-backlog` → PR into `dev`.
+
+- [x] **D1 Keep the KV cache across a Tab-accept.** Accepted text extends the prompt like
+      typing; the WP-5 trim + strict-prefix check already reuse or rebuild correctly, so the
+      invalidate-on-accept is gone (tests document both outcomes).
+- [x] **D2 Secure Input notice.** The status menu says when macOS Secure Input is hiding
+      keystrokes, instead of TypeAhead just going quiet.
+- [x] **D3 British English.** Settings → General → English Spelling: Automatic (follow macOS) /
+      American / British. Drives the spell-checker dictionary (typo fixes, instant word
+      completion) and one static sentence of the model instruction.
+- [x] **D4 Per-website rules in browsers.** Settings → Apps → Websites, and a "Turn Off
+      Suggestions on ⟨site⟩" menu item when a browser is in front. Subdomains included; only
+      sites you add are stored.
+- [x] **D5 Word alternatives.** ⌥↓ on a suggestion lists up to 3 alternatives for its first word;
+      1–3 inserts one. Also: identical prompts now replay the cache (`.replayLast`) instead of a
+      full re-prefill.
+- [x] **D6 Right-to-left scripts — closed, won't do.** Suggestions are English-only by the owner's
+      request (WP-1: instruction + `GhostText.isLikelyEnglish` output gate), so Arabic/Hebrew
+      layout has nothing to show. Revisit only if multilingual suggestions are wanted.
+- [ ] **D7 Sparkle auto-update + notarized DMG — needs the owner.** Requires a paid Apple
+      Developer ID certificate, notarization credentials, and a place to host the app and its
+      update feed. Step-by-step guide: [`release.md`](release.md).
+
+## Still open
+
+Only D7 (owner action). Everything else in this backlog is implemented; runtime checks are in
+the PR dogfood checklists.
