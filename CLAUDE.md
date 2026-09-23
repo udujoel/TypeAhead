@@ -11,7 +11,7 @@ open TypeAhead.xcodeproj
 # Build with Cmd+B (never Cmd+R — debugger becomes AX responsible process, reads fail)
 # Then run: ./run.sh (launches via LaunchServices for correct TCC responsible process)
 
-# Unit tests via SPM (pure logic only; 67 tests)
+# Unit tests via SPM (pure logic only; 491 tests)
 swift test
 
 # Full app build (headless, signing disabled for compile-check)
@@ -57,11 +57,17 @@ KeyEventMonitor → CompletionPipeline → InferenceEngine
 - All inference runs on-device. No network calls for completions ever.
 - Never read `kAXPasswordRole` fields — the AX API blocks this by design, do not attempt workarounds.
 - Cancel active inference immediately on any non-Tab keystroke.
-- Per-app exception list (bundle IDs) always takes precedence over global toggle. An explicit per-app override (`AppPolicyResolver`, Settings → Apps) takes precedence over the exception list, so a user can re-enable completions for a specific excluded app.
+- Per-app precedence (`AppPolicyResolver`): the **global** "Enable Completions" and "Collect inputs" toggles are master switches — off means off in every app. Under an enabled global switch, the per-app exception list disables an app, and an explicit per-app override (Settings → Apps, status menu, ⌃⌥⌘`) beats the exception list, so a user can re-enable a specific excluded app.
+- Every settings toggle must do what it says. Typing history is written only when `ResolvedPolicy.recordHistory` allows it.
+- Secret fields (`SecureFieldClassifier`: password role, `AXSecureTextField` subrole, password/PIN/OTP labels, masked contents) are never read, and never fall back to the keystroke buffer.
 - Model files download to `~/Library/Caches/models/{repoId}/` via MLXLLM. Never bundle models; never hardcode paths.
 - History DB lives in `~/Library/Application Support/TypeAhead/history.db` — plain SwiftData/SQLite, not encrypted at rest; the file is chmod 0600 (owner read/write only) and never leaves the Mac. Real at-rest encryption is out of scope (see overhaul design doc, WS1) — don't claim "encrypted" in UI copy.
 - **AX responsible process:** Use `./run.sh` to launch (LaunchServices). Never use Cmd+R (debugger becomes responsible process, AX reads fail -25204 even when trusted).
 - **CGEventTap callback:** Return `handleGlobal()`'s value directly; never use `?? passRetained(event)` (coalesces swallow-nil into passthrough). See KeyEventMonitor.swift.
+
+## Keyboard
+- Tab / ⌥→ accept the next word · ⇧Tab accepts the whole suggestion · ⌥Tab sends a plain Tab
+- Esc dismisses and pauses until the next word (`DismissCooldown`) · ⌃⌥⌘` toggles the current app · ⌃⌥⌘T opens the menu
 
 ## Entitlements Required
 - `com.apple.security.automation.apple-events`

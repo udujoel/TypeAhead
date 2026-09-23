@@ -47,52 +47,62 @@ also carries the stranded PR #22 work — see A1).
 
 ## Track A — Integrity & honesty (P0)
 
-- [ ] **A1 Land PR #22 on `main`.** WP-7/WP-8 (7 files) only reached the stale
+- [x] **A1 Land PR #22 on `main`.** WP-7/WP-8 (7 files) only reached the stale
       `feature/mirror-ghost-aggressive-suggestions` branch. This branch contains them; its PR
       to `main` lands them.
-- [ ] **A2 "Collect inputs for personalization" must stop collection.** `AppDelegate`'s Tab
+- [x] **A2 "Collect inputs for personalization" must stop collection.** `AppDelegate`'s Tab
       handler calls `historyStore.record` unconditionally; the toggle only stopped history
-      being *used*. Gate the write (pure `HistoryRecordingPolicy`, tested).
-- [ ] **A3 Global "Enable Completions" is a master switch.** `AppPolicyResolver` lets a
+      being *used*. Gate the write on `ResolvedPolicy.recordHistory` (resolver-tested).
+- [x] **A3 Global "Enable Completions" is a master switch.** `AppPolicyResolver` lets a
       per-app "On" override beat the global toggle, so turning TypeAhead off in Settings still
       leaves completions running in those apps. Global off wins; the override still beats the
       exclusion list (the CLAUDE.md rule).
-- [ ] **A4 "Launch at Login" actually registers a login item** (`SMAppService.mainApp`).
-- [ ] **A5 Remove the dead "Show in All Apps" toggle** (nothing reads it; per-app control
+- [x] **A4 "Launch at Login" actually registers a login item** (`SMAppService.mainApp`).
+- [x] **A5 Remove the dead "Show in All Apps" toggle** (nothing reads it; per-app control
       lives in the Apps pane).
-- [ ] **A6 Trigger Delay slider applies immediately.** `CompletionPipeline.debounceInterval`
+- [x] **A6 Trigger Delay slider applies immediately.** `CompletionPipeline.debounceInterval`
       is a `let` captured once at launch; make it live.
-- [ ] **A7 Shift+Tab accepts the whole suggestion** (it was swallowed with no handler).
-- [ ] **A8 Hide the permanently disabled "Check for Updates…" item** until Sparkle is linked.
-- [ ] **A9 The status menu's "Disable in ⟨App⟩" uses the per-app override,** the same state
+- [x] **A7 Shift+Tab accepts the whole suggestion** (it was swallowed with no handler).
+- [x] **A8 Hide the permanently disabled "Check for Updates…" item** until Sparkle is linked.
+- [x] **A9 The status menu's "Disable in ⟨App⟩" uses the per-app override,** the same state
       the Apps pane shows, instead of the legacy exclusion list it can be out of sync with.
+- [x] **A10 Honor "Enable Emoji Suggestions".** Found during the work: nothing read it.
+- [x] **A11 Tab works in TypeAhead's own Settings window.** Found during the work: the local
+      key monitor swallowed every Tab, so Tab couldn't move between Settings fields.
 
 ## Track B — Cotypist parity (P1)
 
-- [ ] **B1 ⌥Tab sends a normal Tab.** Dismisses the ghost and lets the Tab through (indent,
+- [x] **B1 ⌥Tab sends a normal Tab.** Dismisses the ghost and lets the Tab through (indent,
       field navigation) without accepting.
-- [ ] **B2 Esc pauses briefly.** After Esc dismisses a ghost, no new suggestion for a short
+- [x] **B2 Esc pauses briefly.** After Esc dismisses a ghost, no new suggestion for a short
       cooldown or until the next word boundary (pure `DismissCooldown`, tested).
-- [ ] **B3 ⌃⌥⌘\` toggles completions for the current app** (flips its per-app override).
-- [ ] **B4 Snooze choices:** 15 minutes / 1 hour / until tomorrow (pure deadline math, tested).
-- [ ] **B5 Per-app "Record typing history"** (`AppOverride.recordHistory`), resolved by
+- [x] **B3 ⌃⌥⌘\` toggles completions for the current app** (flips its per-app override).
+- [x] **B4 Snooze choices:** 15 minutes / 1 hour / until tomorrow (pure deadline math, tested).
+- [x] **B5 Per-app "Record typing history"** (`AppOverride.recordHistory`), resolved by
       `AppPolicyResolver`, honored by A2's policy, shown in the Apps pane.
-- [ ] **B6 "Add a space after accepted words" setting** (default on). When off, the final
+- [x] **B6 "Add a space after accepted words" setting** (default on). When off, the final
       accepted word gets no trailing space; mid-suggestion spacing is unchanged.
-- [ ] **B7 Mid-line completions toggle** (default on). When off, no suggestion while there
+- [x] **B7 Mid-line completions toggle** (default on). When off, no suggestion while there
       is text after the cursor on the same line (pure check, tested).
-- [ ] **B8 Content-based secure-field detection.** Also skip fields whose subrole is
+- [x] **B8 Content-based secure-field detection.** Also skip fields whose subrole is
       `AXSecureTextField`, whose title/placeholder/description says password/passcode/PIN/
       OTP/one-time code, or whose value is all mask characters (pure `SecureFieldClassifier`,
       tested). Strengthens the "never read password fields" rule.
-- [ ] **B9 Per-app "Improve compatibility"** (`AppOverride.compatibilityMode`): forces
+- [x] **B9 Per-app "Improve compatibility"** (`AppOverride.compatibilityMode`): forces
       keystroke (CGEvent) insertion and the Vision/mirror caret path for that app, the
       user-editable counterpart to the built-in `AppInsertionPolicy` list.
 
 ## Track C — Docs (P2)
 
-- [ ] **C1** Update CLAUDE.md (test count, precedence rules, shortcuts), `docs/next-features.md`
+- [x] **C1** Update CLAUDE.md (test count, precedence rules, shortcuts), `docs/next-features.md`
       (pointer to this backlog), and project memory.
+
+## Result
+
+All items above are implemented on `feature/cotypist-parity`: 491 SPM tests (was 444), headless
+compile-check clean. Runtime behavior still needs the owner's dogfood pass (see the PR checklist):
+the new keys (⇧Tab, ⌥Tab, Esc pause, ⌃⌥⌘`), Launch at Login approval, and the secret-field
+classifier on real password/OTP boxes.
 
 ## Definition of done (every item)
 
