@@ -21,6 +21,32 @@ enum StatusBarMenuLogic {
         return until > now
     }
 
+    /// B4: how long a snooze lasts.
+    enum SnoozeOption: CaseIterable, Sendable {
+        case fifteenMinutes, oneHour, untilTomorrowMorning
+
+        var title: String {
+            switch self {
+            case .fifteenMinutes: "Pause for 15 Minutes"
+            case .oneHour: "Pause for 1 Hour"
+            case .untilTomorrowMorning: "Pause Until Tomorrow Morning"
+            }
+        }
+
+        /// When suggestions resume. "Tomorrow morning" is 8:00 on the next calendar day.
+        func deadline(from now: Date, calendar: Calendar) -> Date {
+            switch self {
+            case .fifteenMinutes: return now.addingTimeInterval(15 * 60)
+            case .oneHour: return now.addingTimeInterval(3600)
+            case .untilTomorrowMorning:
+                let startOfTomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: now))
+                    ?? now.addingTimeInterval(24 * 3600)
+                return calendar.date(byAdding: .hour, value: 8, to: startOfTomorrow)
+                    ?? startOfTomorrow
+            }
+        }
+    }
+
     /// The completion engine is "live" only when the user has suggestions on AND isn't snoozed.
     /// Drives the pipeline's enabled flag so a pause auto-restores without touching the saved
     /// preference.

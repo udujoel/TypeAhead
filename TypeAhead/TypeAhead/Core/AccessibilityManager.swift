@@ -12,6 +12,15 @@ extension AccessibilityManager {
 final class AccessibilityManager {
     private let logger = Logger(subsystem: "app.typeahead", category: "AccessibilityManager")
 
+    /// Whether the most recent focused-element lookup landed on a secret-entry field (B8).
+    /// `runCompletion` checks this so it never falls back to the keystroke buffer — which may
+    /// hold what was just typed into that field — when AX refused to read it.
+    private(set) var focusedFieldIsSecure = false
+
+    /// B9: whether the user switched on "Improve compatibility" for an app (bundle ID). Wired by
+    /// `AppDependencies` to the per-app override; defaults to off so the manager stays standalone.
+    var compatibilityMode: (String) -> Bool = { _ in false }
+
     /// Apps we've already asked to enable their accessibility tree (Chromium/Electron).
     private var coaxedPIDs = Set<pid_t>()
 
@@ -126,7 +135,7 @@ final class AccessibilityManager {
 
     func insertCompletion(_ text: String, into element: AXUIElement) {
         let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-        guard AppInsertionPolicy.preferredMethod(forBundleID: bundleID) == .ax else {
+        guard AppInsertionPolicy.preferredMethod(forBundleID: bundleID, compatibilityMode: compatibilityMode(bundleID)) == .ax else {
             // Known CGEvent app — skip AX and inject directly via keyboard synthesis.
             injectText(text)
             return
@@ -165,7 +174,7 @@ final class AccessibilityManager {
         // the replacement WITHOUT the old word being selected/deleted → garbled ("recievereceive").
         // Skip the AX-selection path for these apps and delete via synthetic backspaces directly.
         let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-        if AppInsertionPolicy.preferredMethod(forBundleID: bundleID) == .cgEvent {
+        if AppInsertionPolicy.preferredMethod(forBundleID: bundleID, compatibilityMode: compatibilityMode(bundleID)) == .cgEvent {
             injectReplacement(replacement, deletingCount: wordLength)
             return
         }
@@ -242,7 +251,7 @@ final class AccessibilityManager {
     /// pinned bar → mouse position.
     func cursorScreenRect() -> CaretPlacement? {
         let bundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-        let unreliable = AppInsertionPolicy.unreliableCaretBounds(forBundleID: bundleID)
+        let unreliable = AppInsertionPolicy.unreliableCaretBounds(forBundleID: bundleID, compatibilityMode: compatibilityMode(bundleID))
         let axRect = onScreenAXCaretRect()
 
         // Reliable apps: trust the AX caret directly (native AppKit/UIKit is accurate + fast).
@@ -320,6 +329,20 @@ final class AccessibilityManager {
     // Injects text by posting synthetic keyboard events.
     // Works regardless of whether the AX API is available.
 
+    /// Posts a real key press (down + up) with the given modifiers — unlike `injectText`, the app
+    /// sees an actual key, so a re-injected Tab/Shift+Tab keeps its native meaning (indent,
+    /// next/previous field) instead of arriving as a typed tab character. Marked so our own
+    /// event tap lets it through.
+    func injectKey(_ keyCode: CGKeyCode, flags: CGEventFlags = []) {
+        guard let source = CGEventSource(stateID: .combinedSessionState) else { return }
+        for keyDown in [true, false] {
+            let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: keyDown)
+            event?.flags = flags
+            event?.setIntegerValueField(.eventSourceUserData, value: AccessibilityManager.injectedEventMarker)
+            event?.post(tap: .cgAnnotatedSessionEventTap)
+        }
+    }
+
     func injectText(_ text: String) {
         guard let source = CGEventSource(stateID: .combinedSessionState) else { return }
         for charValue in text.utf16 {
@@ -360,7 +383,8 @@ final class AccessibilityManager {
         let sysErr = AXUIElementCopyAttributeValue(sysWide, kAXFocusedUIElementAttribute as CFString, &sysRef)
         if sysErr == .success, let ref = sysRef {
             let el = ref as! AXUIElement
-            return isPasswordField(el) ? nil : el
+            focusedFieldIsSecure = isPasswordField(el)
+            return focusedFieldIsSecure ? nil : el
         }
 
         // Approach 2: per-app focused element
@@ -368,8 +392,10 @@ final class AccessibilityManager {
         let appErr = AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &appRef)
         if appErr == .success, let ref = appRef {
             let el = ref as! AXUIElement
-            return isPasswordField(el) ? nil : el
+            focusedFieldIsSecure = isPasswordField(el)
+            return focusedFieldIsSecure ? nil : el
         }
+        focusedFieldIsSecure = false
 
         // Both failed — record why (AXError raw value) for the one-shot probe.
         lastFocusDiag = "app=\(frontApp.localizedName ?? "?") sysWideErr=\(sysErr.rawValue) appErr=\(appErr.rawValue)"
@@ -402,11 +428,32 @@ final class AccessibilityManager {
         return screenRect
     }
 
+    /// B8: whether the element is a secret-entry field (see `SecureFieldClassifier`). Checks
+    /// role/subrole first and stops there when they're conclusive, so a real password field's
+    /// value is never read; the value is only examined for fields that look ordinary otherwise.
     private func isPasswordField(_ element: AXUIElement) -> Bool {
-        var role: CFTypeRef?
-        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
-        return (role as? String) == "AXPasswordField"
+        // Role and labels don't change while the user types in one field — cache that verdict per
+        // element (focus lookups happen several times per keystroke). Only the masked-value check
+        // must re-run, since a custom password box can start empty.
+        let staticVerdict: Bool
+        if let cached = secureVerdictCache, CFEqual(cached.element, element) {
+            staticVerdict = cached.isSecret
+        } else {
+            staticVerdict = SecureFieldClassifier.isSecureRole(
+                role: element.stringAttribute(kAXRoleAttribute),
+                subrole: element.stringAttribute(kAXSubroleAttribute)
+            ) || SecureFieldClassifier.labelsSuggestSecret(
+                [kAXTitleAttribute, kAXPlaceholderValueAttribute, kAXDescriptionAttribute, kAXIdentifierAttribute]
+                    .compactMap { element.stringAttribute($0) }
+            )
+            secureVerdictCache = (element, staticVerdict)
+        }
+        if staticVerdict { return true }
+        guard let value = element.stringValue else { return false }
+        return SecureFieldClassifier.looksMasked(value)
     }
+
+    private var secureVerdictCache: (element: AXUIElement, isSecret: Bool)?
 
     /// The focused window's frame in Cocoa screen coordinates (bottom-left origin), or nil if
     /// AX can't supply it. Used to pin the overlay above the window's input when the caret rect
@@ -478,6 +525,11 @@ final class AccessibilityManager {
 }
 
 private extension AXUIElement {
+    func stringAttribute(_ attribute: String) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(self, attribute as CFString, &value) == .success else { return nil }
+        return value as? String
+    }
     var stringValue: String? {
         var value: CFTypeRef?
         AXUIElementCopyAttributeValue(self, kAXValueAttribute as CFString, &value)

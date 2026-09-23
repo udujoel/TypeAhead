@@ -3,6 +3,7 @@ import SwiftUI
 struct GeneralView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(ModelManager.self) private var modelManager
+    @State private var loginItem = LoginItemController.shared
 
     private var recommendedModel: ModelConfig {
         let ramGB = Int(ProcessInfo.processInfo.physicalMemory / (1024 * 1024 * 1024))
@@ -32,6 +33,22 @@ struct GeneralView: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
+                Toggle("Mid-line Completions", isOn: $s.midLineCompletionsEnabled)
+                Text("Suggest even when there's text after the cursor on the same line.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Section {
+                Toggle("Add a Space After Accepted Words", isOn: $s.addSpaceAfterAcceptedWord)
+                LabeledContent("Accept next word", value: "Tab  or  ⌥→")
+                LabeledContent("Accept whole suggestion", value: "⇧Tab")
+                LabeledContent("Type a normal Tab", value: "⌥Tab")
+                LabeledContent("Dismiss and pause briefly", value: "Esc")
+                LabeledContent("Turn on/off for current app", value: "⌃⌥⌘`")
+                LabeledContent("Open the TypeAhead menu", value: "⌃⌥⌘T")
+            } header: {
+                Text("Accepting Suggestions")
             }
 
             Section {
@@ -72,9 +89,25 @@ struct GeneralView: View {
             }
 
             Section {
-                Toggle("Launch at Login", isOn: $s.launchAtLogin)
+                Toggle("Launch at Login", isOn: Binding(
+                    get: { loginItem.isEnabled || loginItem.needsApproval },
+                    set: { loginItem.setEnabled($0) }
+                ))
+                if loginItem.needsApproval {
+                    HStack {
+                        Text("Allow TypeAhead in System Settings → General → Login Items.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Open") { loginItem.openSystemSettings() }
+                    }
+                }
+                if let error = loginItem.lastError {
+                    Text("Couldn't change the login item: \(error)")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
                 Toggle("Enable Emoji Suggestions", isOn: $s.emojiSuggestionsEnabled)
-                Toggle("Show in All Apps", isOn: $s.showInAllApps)
             } header: {
                 Text("App")
             } footer: {
@@ -85,6 +118,7 @@ struct GeneralView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("General")
+        .onAppear { loginItem.refresh() }
     }
 }
 

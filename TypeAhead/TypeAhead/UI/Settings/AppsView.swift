@@ -105,9 +105,9 @@ struct AppsView: View {
     }
 }
 
-/// One row in the Apps list: name/bundleID, a completions Default/On/Off picker, a
-/// "Disable Tab accept" toggle, and a per-app style instruction field. All three write
-/// straight through to `AppSettings.appRegistry[bundleID].override`.
+/// One row in the Apps list: name/bundleID, a completions Default/On/Off picker, the
+/// "Disable Tab accept" / "Record typing history" / "Improve compatibility" toggles, and a
+/// per-app style instruction field. All write through `AppSettings.updateOverride`.
 private struct AppRow: View {
     @Environment(AppSettings.self) private var settings
     let bundleID: String
@@ -134,8 +134,17 @@ private struct AppRow: View {
                 .frame(width: 180)
             }
 
-            Toggle("Disable Tab accept", isOn: tabKeyDisabledBinding)
-                .font(.caption)
+            HStack(spacing: 16) {
+                Toggle("Disable Tab accept", isOn: tabKeyDisabledBinding)
+                Toggle("Record typing history", isOn: recordHistoryBinding)
+                    .disabled(!settings.storeInputHistory)
+                    .help(settings.storeInputHistory
+                          ? "Save words you accept in this app for personalization."
+                          : "Turn on \u{201C}Collect inputs\u{201D} in Personalization first.")
+                Toggle("Improve compatibility", isOn: compatibilityBinding)
+                    .help("Insert by simulated typing and place suggestions using the screen, for apps where suggestions land in the wrong place or Tab doesn't insert.")
+            }
+            .font(.caption)
 
             TextField("Style instruction (e.g. \"Keep it terse and casual.\")", text: styleInstructionBinding)
                 .textFieldStyle(.roundedBorder)
@@ -158,6 +167,21 @@ private struct AppRow: View {
         )
     }
 
+    private var recordHistoryBinding: Binding<Bool> {
+        Binding(
+            get: { settings.storeInputHistory && (app.override.recordHistory ?? true) },
+            // Store only the exception (off); "on" goes back to inheriting the global switch.
+            set: { newValue in mutate { $0.recordHistory = newValue ? nil : false } }
+        )
+    }
+
+    private var compatibilityBinding: Binding<Bool> {
+        Binding(
+            get: { app.override.compatibilityMode ?? false },
+            set: { newValue in mutate { $0.compatibilityMode = newValue ? true : nil } }
+        )
+    }
+
     private var styleInstructionBinding: Binding<String> {
         Binding(
             get: { app.override.styleInstruction ?? "" },
@@ -166,8 +190,6 @@ private struct AppRow: View {
     }
 
     private func mutate(_ change: (inout AppOverride) -> Void) {
-        var entry = app
-        change(&entry.override)
-        settings.appRegistry[bundleID] = entry
+        settings.updateOverride(bundleID: bundleID, displayName: app.displayName, change)
     }
 }

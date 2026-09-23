@@ -39,6 +39,20 @@ enum AppInsertionPolicy {
         return false
     }
 
+    // MARK: - B9: user "Improve compatibility" override
+
+    /// The built-in list, plus the user's per-app "Improve compatibility" switch: with it on, any
+    /// app gets keystroke insertion.
+    static func preferredMethod(forBundleID bundleID: String, compatibilityMode: Bool) -> InsertionMethod {
+        compatibilityMode ? .cgEvent : preferredMethod(forBundleID: bundleID)
+    }
+
+    /// The built-in list, plus "Improve compatibility": with it on, the AX caret rect is treated as
+    /// unreliable and placement uses the Vision → mirror ladder.
+    static func unreliableCaretBounds(forBundleID bundleID: String, compatibilityMode: Bool) -> Bool {
+        compatibilityMode || unreliableCaretBounds(forBundleID: bundleID)
+    }
+
     // Bundle-ID prefixes whose AX caret bounds cannot be trusted for overlay placement.
     private static let unreliableCaretPrefixes: [String] = [
         "com.google.Chrome",

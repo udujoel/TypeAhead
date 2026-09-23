@@ -7,10 +7,16 @@ import Foundation
 /// been longer than `maxWait` since the last fire, fire immediately — so a fresh suggestion
 /// shows up mid-burst too. Overlapping fires are harmless: each `inferenceAction` cancels the
 /// previous in-flight generation.
+///
+/// WP-8: `maxWait` was lowered from 0.5 to 0.35. With the KV-cache reuse bug fixed (WP-5),
+/// a mid-typing fire's prompt processing is a cheap few-token delta prefill rather than a
+/// full rebuild, so firing more often during sustained typing is cheap — the throttle only
+/// needs to bound the worst-case cadence, not protect against expensive re-prefills.
 @MainActor
 final class CompletionPipeline {
     private var debounceTask: Task<Void, Never>?
-    private let debounceInterval: TimeInterval
+    /// Live-adjustable (A6): `AppDependencies` keeps this in sync with the Trigger Delay slider.
+    var debounceInterval: TimeInterval
     private let maxWait: TimeInterval
     private var lastFire: Date = .distantPast
     var isEnabled: Bool
@@ -38,7 +44,7 @@ final class CompletionPipeline {
 
     init(
         debounceInterval: TimeInterval = 0.18,
-        maxWait: TimeInterval = 0.5,
+        maxWait: TimeInterval = 0.35,
         enabled: Bool = true,
         inferenceAction: @escaping @Sendable () async -> Void
     ) {
@@ -92,7 +98,7 @@ final class CompletionPipeline {
 
     static func mock(
         debounceInterval: TimeInterval = 0.18,
-        maxWait: TimeInterval = 0.5,
+        maxWait: TimeInterval = 0.35,
         enabled: Bool = true
     ) -> CompletionPipeline {
         CompletionPipeline(debounceInterval: debounceInterval, maxWait: maxWait, enabled: enabled, inferenceAction: {})

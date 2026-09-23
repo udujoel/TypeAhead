@@ -166,6 +166,7 @@ final class InferenceEngine {
         maxTokens: Int,
         maxWords: Int = 0,
         personaNote: String? = nil,
+        instructionSuffix: String? = nil,
         temperature: Float = 0.5,
         onUpdate: @escaping @Sendable (String) -> Void,
         onComplete: @escaping @Sendable () -> Void
@@ -178,7 +179,13 @@ final class InferenceEngine {
         // still needs a concrete number to tell the model, so fall back to the medium default
         // (4) rather than telling it "at most 0 words".
         let instructionTargetWords = maxWords > 0 ? maxWords : 4
-        let instruction = PersonalizationEngine.buildInstruction(personaNote: personaNote, suffix: suffix, targetWords: instructionTargetWords)
+        // WP-8: `instructionSuffix` is a separate knob from `suffix` so a caller can strip the
+        // suffix hint out of the INSTRUCTION (leaner retry prompt) while `suffix` itself still
+        // flows to the output-side overlap trim below (`ghostText`/`GhostText.build`) — those
+        // are two different concerns that happened to share one parameter before. Defaults to
+        // `suffix` so every existing caller (which doesn't pass `instructionSuffix`) sees
+        // identical behavior to before this split.
+        let instruction = PersonalizationEngine.buildInstruction(personaNote: personaNote, suffix: instructionSuffix ?? suffix, targetWords: instructionTargetWords)
 
         // ASSISTANT-PREFILL (assembled in HFBridge): the model turn is seeded with `prompt`
         // and left open, so the instruct model continues the user's own text in-distribution.

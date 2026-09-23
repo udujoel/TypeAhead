@@ -32,6 +32,21 @@ enum CompletionCoordinator {
         policy.completionsEnabled
     }
 
+    // MARK: - B7: mid-line completions
+
+    /// Whether there's real text after the cursor on the current line (the cursor sits mid-line).
+    /// Text on later lines doesn't count — typing at the end of a line above other paragraphs is
+    /// still an end-of-line completion.
+    static func isMidLine(textAfterCursor: String) -> Bool {
+        let restOfLine = textAfterCursor.prefix { !$0.isNewline }
+        return restOfLine.contains { !$0.isWhitespace }
+    }
+
+    /// Whether the mid-line setting lets this cycle proceed.
+    static func passesMidLineGate(midLineEnabled: Bool, textAfterCursor: String) -> Bool {
+        midLineEnabled || !isMidLine(textAfterCursor: textAfterCursor)
+    }
+
     // MARK: - Fast-path selection order
 
     /// Which fast path (if any) a completion cycle should take, given what the spell-checker and

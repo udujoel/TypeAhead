@@ -1,7 +1,11 @@
 # TypeAhead — Next Features (design & build plan)
 
-Status: **planning**. These are fleshed-out specs to be implemented on dedicated branches,
-one feature per branch, merged via PR like `refine/positioning-and-tab`.
+Status: **all items #1–#13 shipped** (PRs #2–#22). The current backlog — integrity fixes found in
+the 2026-09 review plus Cotypist parity — lives in
+[`backlog-2026-09-cotypist-parity.md`](backlog-2026-09-cotypist-parity.md).
+
+These were fleshed-out specs implemented on dedicated branches, one feature per branch, merged
+via PR like `refine/positioning-and-tab`.
 
 Baseline (what already works on `main` after PR #1): on-device MLX completions via
 assistant-prefill, inline ghost text at the caret (AX, sandbox off), Tab word-by-word

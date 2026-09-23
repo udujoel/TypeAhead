@@ -3,13 +3,90 @@ import Testing
 @testable import TypeAhead
 
 @Suite struct AppSettingsTests {
+    /// Isolated `UserDefaults` suite per call, keyed by a UUID so tests never read/write the
+    /// developer's real defaults and never interfere with each other even when run in
+    /// parallel. Removes any pre-existing persistent domain for the (freshly-minted, so
+    /// always empty) suite name before handing it back.
+    private static func isolatedDefaults(_ name: String) -> (defaults: UserDefaults, suiteName: String) {
+        let suiteName = "AppSettingsTests.\(name).\(UUID().uuidString)"
+        let d = UserDefaults(suiteName: suiteName)!
+        d.removePersistentDomain(forName: suiteName)
+        return (d, suiteName)
+    }
+
     @Test func defaultsAreCorrect() {
-        let settings = AppSettings()
+        let (d, suiteName) = Self.isolatedDefaults(#function)
+        defer { d.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(defaults: d)
         #expect(settings.completionsEnabled == true)
-        #expect(settings.completionDelay == 0.18)
+        #expect(settings.completionDelay == 0.12)
         #expect(settings.completionLength == .medium)
         #expect(settings.activeModelID == ModelConfig.defaultModel.id)
-        #expect(settings.showInAllApps == true)
+        #expect(settings.addSpaceAfterAcceptedWord == true)
+        #expect(settings.midLineCompletionsEnabled == true)
+    }
+
+    @Test func newAcceptAndMidLineSettingsPersist() {
+        let (d, suiteName) = Self.isolatedDefaults(#function)
+        defer { d.removePersistentDomain(forName: suiteName) }
+        let first = AppSettings(defaults: d)
+        first.addSpaceAfterAcceptedWord = false
+        first.midLineCompletionsEnabled = false
+        let second = AppSettings(defaults: d)
+        #expect(second.addSpaceAfterAcceptedWord == false)
+        #expect(second.midLineCompletionsEnabled == false)
+    }
+
+    @Test func setOverrideCreatesEntryForUnregisteredApp() {
+        let (d, suiteName) = Self.isolatedDefaults(#function)
+        defer { d.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(defaults: d)
+        settings.updateOverride(bundleID: "com.example.new", displayName: "New") { $0.completionsEnabled = false }
+        #expect(settings.appRegistry["com.example.new"]?.override.completionsEnabled == false)
+        #expect(settings.appRegistry["com.example.new"]?.displayName == "New")
+    }
+
+    @Test func setOverrideKeepsOtherFieldsOfExistingEntry() {
+        let (d, suiteName) = Self.isolatedDefaults(#function)
+        defer { d.removePersistentDomain(forName: suiteName) }
+        let settings = AppSettings(defaults: d)
+        settings.updateOverride(bundleID: "com.example.app", displayName: "App") { $0.tabKeyDisabled = true }
+        settings.updateOverride(bundleID: "com.example.app", displayName: "App") { $0.completionsEnabled = true }
+        let o = settings.appRegistry["com.example.app"]?.override
+        #expect(o?.tabKeyDisabled == true)
+        #expect(o?.completionsEnabled == true)
+    }
+
+    // Regression test for the didSet-in-init bug: `completionDelay = 0.12` inside `init`
+    // never fires its didSet (property observers don't fire on assignments made directly
+    // within the initializer, see Swift semantics), so without an explicit persist the v4
+    // migration only "sticks" for the lifetime of that one AppSettings instance — a second
+    // instance reading the same store reloads the pre-migration value. This must fail
+    // against the old code (no explicit `defaults.set` in the migration).
+    @Test func v4MigrationPersistsAcrossInstances() {
+        let (d, suiteName) = Self.isolatedDefaults(#function)
+        defer { d.removePersistentDomain(forName: suiteName) }
+        d.set(0.18, forKey: "completionDelay")
+        let first = AppSettings(defaults: d)
+        #expect(first.completionDelay == 0.12)
+
+        let second = AppSettings(defaults: d)
+        #expect(second.completionDelay == 0.12)
+    }
+
+    // A user who deliberately slowed the delay down (away from the old 0.18 default) must
+    // not be clobbered by the v4 migration's "bring old default down to 0.12" logic. Both
+    // earlier migrations are marked done — this models a user already on the current
+    // version who then manually raised the delay, not a fresh v2/v3 upgrade (the v3
+    // migration's own ">= 0.25" gate would otherwise re-trigger on the seeded 0.5 here,
+    // which is a real but separate migration step already covered by its own gate).
+    @Test func v4MigrationPreservesDeliberatelySlowerDelay() {
+        let (d, suiteName) = Self.isolatedDefaults(#function)
+        defer { d.removePersistentDomain(forName: suiteName) }
+        d.set(true, forKey: "didMigrateDelay_v3")
+        d.set(0.5, forKey: "completionDelay")
+        let settings = AppSettings(defaults: d)
+        #expect(settings.completionDelay == 0.5)
     }
 
     @Test func completionLengthTokenBudget() {

@@ -108,4 +108,21 @@ import Testing
     @Test func emptyBundleIDHasReliableCaretBounds() {
         #expect(!AppInsertionPolicy.unreliableCaretBounds(forBundleID: ""))
     }
+
+    // MARK: - B9: per-app "Improve compatibility"
+
+    @Test func compatibilityModeForcesKeystrokeInsertionForAnyApp() {
+        #expect(AppInsertionPolicy.preferredMethod(forBundleID: "com.apple.TextEdit", compatibilityMode: true) == .cgEvent)
+        #expect(AppInsertionPolicy.preferredMethod(forBundleID: "com.apple.TextEdit", compatibilityMode: false) == .ax)
+    }
+
+    @Test func compatibilityModeMarksCaretUnreliableForAnyApp() {
+        #expect(AppInsertionPolicy.unreliableCaretBounds(forBundleID: "com.apple.TextEdit", compatibilityMode: true))
+        #expect(!AppInsertionPolicy.unreliableCaretBounds(forBundleID: "com.apple.TextEdit", compatibilityMode: false))
+    }
+
+    @Test func builtInListStillAppliesWithoutCompatibilityMode() {
+        #expect(AppInsertionPolicy.preferredMethod(forBundleID: "com.google.Chrome", compatibilityMode: false) == .cgEvent)
+        #expect(AppInsertionPolicy.unreliableCaretBounds(forBundleID: "com.tinyspeck.slackmacgap", compatibilityMode: false))
+    }
 }

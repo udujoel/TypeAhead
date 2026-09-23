@@ -50,10 +50,29 @@ final class AppDependencies {
     /// decide whether to accept or pass Tab through as a literal keystroke (see AppPolicyResolver).
     var currentPolicy = AppPolicyResolver.resolve(globalCompletionsEnabled: true, excludedByList: false, override: nil)
 
+    /// B2: set when Escape dismisses a ghost; while active, `runCompletion` shows nothing.
+    var dismissCooldown: DismissCooldown?
+
+    /// The effective policy for `bundleID` (nil = no identifiable frontmost app) from the current
+    /// settings. The one place the global toggles, legacy exclusion list, and per-app override are
+    /// combined — `runCompletion`, the status menu, and the per-app shortcut all go through here.
+    func resolvePolicy(bundleID: String?) -> ResolvedPolicy {
+        AppPolicyResolver.resolve(
+            globalCompletionsEnabled: settings.completionsEnabled,
+            excludedByList: bundleID.map { settings.exceptionList.isExcluded(bundleID: $0) } ?? false,
+            override: bundleID.flatMap { settings.appRegistry[$0]?.override },
+            globalRecordHistory: settings.storeInputHistory
+        )
+    }
+
     init() {
         // Wire on-device Vision caret detection for Electron/Chromium apps with unreliable AX
         // caret bounds. Capture lives here so the ScreenCaptureKit dependency stays app-only.
         accessibilityManager.enableVisionCapture { await ScreenshotContextProvider.captureActiveWindow() }
+        // B9: per-app "Improve compatibility" feeds the insertion/caret decisions.
+        accessibilityManager.compatibilityMode = { [weak self] bundleID in
+            self?.settings.appRegistry[bundleID]?.override.compatibilityMode ?? false
+        }
 
         // Reset context the moment the user switches apps, so text typed in one app can't leak
         // into a suggestion for the next. (Field switches *within* an app are caught on the
@@ -66,6 +85,17 @@ final class AppDependencies {
             queue: .main
         ) { _ in
             Task { @MainActor in AppDependencies.shared.handleFocusChange() }
+        }
+        syncPipelineWithSettings()
+    }
+
+    /// A6: the pipeline's debounce was captured once at launch, so moving the Trigger Delay slider
+    /// did nothing until a relaunch. Observation re-arms after every change.
+    private func syncPipelineWithSettings() {
+        withObservationTracking {
+            completionPipeline.debounceInterval = settings.completionDelay
+        } onChange: {
+            Task { @MainActor in AppDependencies.shared.syncPipelineWithSettings() }
         }
     }
 
@@ -81,6 +111,7 @@ final class AppDependencies {
             overlayController.hide(animated: false)
         }
         focusEpoch.focusChanged()
+        dismissCooldown = nil  // an Escape in the previous field shouldn't mute the new one
         // WP-5 (P1): drop the screen-context OCR cache on every focus change (app switch or
         // in-field switch) rather than relying solely on the TTL below. This is the actual
         // "new field/app gets fresh context" guarantee; the TTL just bounds how stale a
@@ -155,20 +186,10 @@ final class AppDependencies {
         // generalizes that rule to also honor an explicit per-app override).
         if let frontApp = NSWorkspace.shared.frontmostApplication, let bundleID = frontApp.bundleIdentifier {
             settings.registerAppIfNeeded(bundleID: bundleID, displayName: frontApp.localizedName ?? bundleID)
-            let excluded = settings.exceptionList.isExcluded(bundleID: bundleID)
-            let override = settings.appRegistry[bundleID]?.override
-            currentPolicy = AppPolicyResolver.resolve(
-                globalCompletionsEnabled: settings.completionsEnabled,
-                excludedByList: excluded,
-                override: override
-            )
+            currentPolicy = resolvePolicy(bundleID: bundleID)
             guard CompletionCoordinator.shouldRunCycle(policy: currentPolicy) else { return }
         } else {
-            currentPolicy = AppPolicyResolver.resolve(
-                globalCompletionsEnabled: settings.completionsEnabled,
-                excludedByList: false,
-                override: nil
-            )
+            currentPolicy = resolvePolicy(bundleID: nil)
         }
 
         // Focus hygiene: if the user moved to a different field since the last cycle, drop stale
@@ -182,9 +203,16 @@ final class AppDependencies {
         // flickering the overlay and tripping the acceptance guardrail. For those apps the
         // app-switch observer is the (robust) reset; we skip the per-field check.
         let frontBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? ""
-        if !AppInsertionPolicy.unreliableCaretBounds(forBundleID: frontBundleID),
+        if !AppInsertionPolicy.unreliableCaretBounds(forBundleID: frontBundleID, compatibilityMode: currentPolicy.compatibilityMode),
            accessibilityManager.focusedElementChanged() {
             handleFocusChange()
+        }
+        // B2: Escape asked for a short break from suggestions — honor it until it expires or the
+        // user reaches the next word boundary (see DismissCooldown). Checked after the field-switch
+        // reset above, which clears it: an Escape in one field shouldn't mute the next.
+        if let cooldown = dismissCooldown {
+            if cooldown.isActive(now: Date()) { return }
+            dismissCooldown = nil
         }
         // Stamp every suggestion shown this cycle (spell/emoji/ML) with the current epoch so it
         // can't be accepted after a later focus change lands it in the wrong field. Read fresh
@@ -198,6 +226,27 @@ final class AppDependencies {
         // leftover spell/emoji mode can't still be showing.
         let cycleEpoch = focusEpoch.epoch
 
+        // WP-2 stale-paint guard / WP-B retry-once (item 3): snapshot the pipeline's validity
+        // token now, at cycle start — before the `await ScreenshotContextProvider
+        // .captureAndExtractText()` / `personalizationEngine.examples(...)` awaits further down,
+        // so a correction key (backspace/arrows) landing DURING those awaits is caught too, not
+        // just one that lands after inference starts. `CompletionPipeline.cycleValidityToken`
+        // increments on every debounce/max-wait `fire()` (a newer keystroke started a fresher
+        // cycle) AND on every `cancel()` (a correction key invalidated this cycle without
+        // starting a new one, see `cycleValidityToken`'s doc comment for the "heelp" bug this
+        // closes) — so if it's still equal to this snapshot when a paint or a completion arrives,
+        // nothing has happened since that would make this generation stale. Combined with
+        // `focusEpoch.mayAccept`, this is the staleness guard the instant-dictionary paint, the
+        // ML paint path (`onUpdate` below), and the retry path (`onComplete` below) all check
+        // before painting/re-firing: either signal moving means abort. (A newer keystroke during
+        // attempt 0 would also have called `inferenceEngine.complete` again directly, which
+        // cancels `currentTask` — cancellation already skips `onComplete` entirely, per
+        // `InferenceEngine.complete`'s `if !Task.isCancelled { onComplete() }` — but `onUpdate`
+        // closures already scheduled onto the main actor run regardless of cancellation, which is
+        // exactly the "heelp" mechanism: the counter check below is what actually stops those
+        // late paints.)
+        let cycleValidityToken = completionPipeline.cycleValidityToken
+
         // Read the text around the cursor. Prefer the Accessibility API (full
         // field contents); fall back to the keystroke buffer for apps where AX
         // is unavailable (e.g. some Electron apps).
@@ -209,6 +258,12 @@ final class AppDependencies {
             context = axContext
             source = "AX"
         } else {
+            // B8: AX refused because the field holds a secret — the buffer may contain exactly
+            // what was typed into it. Drop it and suggest nothing.
+            if accessibilityManager.focusedFieldIsSecure {
+                keyMonitor.keystrokeBuffer.clear()
+                return
+            }
             let bufferText = keyMonitor.keystrokeBuffer.text
             guard bufferText.count >= 3 else { return }
             let appName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
@@ -227,7 +282,9 @@ final class AppDependencies {
         // Both detectors run even when no ML model is loaded (checked further below); neither
         // needs the inference engine.
         let spellFix = TypoDetector.correction(in: context.textBeforeCursor)
-        let emojiShortcode: String? = EmojiSuggester.isEmojiMode(textBeforeCursor: context.textBeforeCursor)
+        // A10: the "Enable Emoji Suggestions" toggle was never read — honor it here.
+        let emojiShortcode: String? = settings.emojiSuggestionsEnabled
+            && EmojiSuggester.isEmojiMode(textBeforeCursor: context.textBeforeCursor)
             ? EmojiSuggester.shortcode(from: context.textBeforeCursor)
             : nil
         let emojiMatch = emojiShortcode.flatMap { EmojiSuggester.suggest(shortcode: $0).first }
@@ -295,6 +352,13 @@ final class AppDependencies {
         case .none:
             break
         }
+
+        // B7: with "Mid-line completions" off, stay quiet while the cursor has text after it on
+        // the same line (spell/emoji fast paths above still apply — they fix the word itself).
+        guard CompletionCoordinator.passesMidLineGate(
+            midLineEnabled: settings.midLineCompletionsEnabled,
+            textAfterCursor: context.textAfterCursor
+        ) else { return }
 
         // ML inference requires the model to be loaded.
         guard inferenceEngine.isLoaded else { return }
@@ -417,23 +481,6 @@ final class AppDependencies {
         // newline it shouldn't see.
         let mirrorTypedText = context.textBeforeCursor
 
-        // WP-2 stale-paint guard / WP-B retry-once (item 3): snapshot the pipeline's validity
-        // token now, before any inference starts. `CompletionPipeline.cycleValidityToken`
-        // increments on every debounce/max-wait `fire()` (a newer keystroke started a fresher
-        // cycle) AND on every `cancel()` (a correction key — backspace/arrows — invalidated this
-        // cycle without starting a new one, see `cycleValidityToken`'s doc comment for the
-        // "heelp" bug this closes) — so if it's still equal to this snapshot when a paint or a
-        // completion arrives, nothing has happened since that would make this generation stale.
-        // Combined with `focusEpoch.mayAccept`, this is the staleness guard BOTH the paint path
-        // (`onUpdate` below) and the retry path (`onComplete` below) check before painting/
-        // re-firing: either signal moving means abort. (A newer keystroke during attempt 0 would
-        // also have called `inferenceEngine.complete` again directly, which cancels `currentTask`
-        // — cancellation already skips `onComplete` entirely, per `InferenceEngine.complete`'s `if
-        // !Task.isCancelled { onComplete() }` — but `onUpdate` closures already scheduled onto the
-        // main actor run regardless of cancellation, which is exactly the "heelp" mechanism: the
-        // counter check below is what actually stops those late paints.)
-        let cycleValidityToken = completionPipeline.cycleValidityToken
-
         func runInference(temperature: Float, attempt: Int) {
             // Tracks whether this attempt ever produced a usable ghost (a non-empty `full` —
             // InferenceEngine.ghostText/GhostText.build already collapses junk output to "").
@@ -442,12 +489,25 @@ final class AppDependencies {
             // share this one flag across the same generation.
             let outcome = GenerationOutcome()
 
+            // WP-8: on the retry (attempt 1), strip the prompt scaffolding — no persona note,
+            // no suffix hint in the INSTRUCTION — leaving just the bare `baseInstruction`. The
+            // remaining empty-generation cases post-cache-fix correlate with prompt-scaffolding
+            // confusion in this small a model rather than an unlucky sample; temperature alone
+            // had a poor retry hit rate in dogfooding logs, so give the retry a shorter, more
+            // direct instruction instead. This only touches the INSTRUCTION — `suffix` itself is
+            // still passed through unchanged below, so the output-side overlap trim
+            // (`GhostText.build`'s `suffix` param, via `InferenceEngine.ghostText`) keeps using
+            // the real suffix even on retry; we're dropping the suffix from the prompt, not from
+            // output hygiene. The retry already pays a full prefill regardless (see `complete`'s
+            // doc comment on `temperature`), so a different instruction adds no extra cache cost.
+            let isRetry = attempt > 0
             inferenceEngine.complete(
                 prompt: prompt,
                 suffix: suffix,
                 maxTokens: settings.completionLength.maxTokens,
                 maxWords: settings.completionLength.maxWords,
-                personaNote: personaNote,
+                personaNote: isRetry ? nil : personaNote,
+                instructionSuffix: isRetry ? "" : suffix,
                 temperature: temperature
             ) { [weak self] full in
                 // Called on the model executor — hop to main to touch UI.
@@ -509,6 +569,59 @@ final class AppDependencies {
                     logger.info("retrying generation: attempt 0 produced no usable ghost, retrying at temperature=0.8")
                     runInference(temperature: 0.8, attempt: 1)
                 }
+            }
+        }
+
+        // WP-7: instant dictionary-based ghost for the word the user is mid-typing, shown
+        // through the SAME showOrUpdateML(...) call the ML streaming path uses below — a
+        // dictionary word-completion ghost is semantically identical to an ML ghost that
+        // continues the current word (no leading space, Tab appends via .acceptWord,
+        // type-through advances it, divergence hides it), so there is no new overlay mode
+        // here, just an instant source for the existing one. The ML generation started by
+        // runInference() below then replaces this ghost in place, through the same
+        // update-in-place branch of showOrUpdateML, the moment its first token lands.
+        //
+        // Placed here (after every gate above: policy, placement suppress,
+        // shouldRunInference, the 8-char minimum, and shouldAttemptCompletion) so the
+        // instant ghost respects every precondition the ML path respects — it never shows
+        // where the ML path wouldn't have attempted anyway. It runs AFTER the
+        // `ScreenshotContextProvider.captureAndExtractText()` / `personalizationEngine
+        // .examples(...)` awaits above, so a focus change (or a correction key) landing during
+        // those awaits is a real hazard here too, not just for the ML paint path below — hence
+        // the same two staleness guards, checked against the values snapshotted at cycle start
+        // (see the comment on `cycleValidityToken` up top).
+        //
+        // Mutual exclusion with spell-correction (verified): TypoDetector.correction only
+        // fires for a trailing word that is NOT a prefix of any valid dictionary word
+        // (isPrefixOfValidWord guard) — so any word for which WordCompleter here finds a
+        // completion is, by construction, exactly the case spellFix above would have
+        // returned nil for. They can't both fire for the same cursor position. And by
+        // this point in the function, both the .spell and .emoji cases above have already
+        // `return`ed if they matched — this line is unreached unless CompletionCoordinator
+        // .selectFastPath picked neither.
+        guard focusEpoch.mayAccept(stampedEpoch: generationEpoch) else { return }
+        guard completionPipeline.cycleValidityToken == cycleValidityToken else { return }
+        if let partial = ContextBuilder.currentWord(context: context),
+           WordCompleter.shouldOfferInstantCompletion(partial: partial),
+           let suffix = WordCompleter.completionSuffix(forPartial: partial),
+           GhostText.isUsableGhost(suffix) {
+            let firstPaint = overlayController.showOrUpdateML(
+                ghost: suffix,
+                epoch: generationEpoch,
+                cursorRect: cursorRect,
+                fontSize: fontSize,
+                presentation: placement.presentation,
+                tier: placement.tier,
+                textBeforeCursor: mirrorTypedText
+            )
+            if firstPaint {
+                recordSuggestionEvent(
+                    kind: .shown,
+                    promptTail: promptTail,
+                    ghostText: suffix,
+                    latencyMs: Date().timeIntervalSince(generationStart) * 1000,
+                    metadata: "dict,tier=\(placement.tier.rawValue)"
+                )
             }
         }
 
