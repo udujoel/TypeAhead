@@ -10,10 +10,10 @@ struct PromptCacheValidityTests {
         #expect(decision == .rebuild)
     }
 
-    @Test("identical tokens -> rebuild (nothing new to append)")
-    func identicalTokensRebuilds() {
+    @Test("identical tokens -> replay the last token (re-sample without re-prefilling)")
+    func identicalTokensReplayLast() {
         let decision = PromptCacheValidity.decide(cachedTokens: [1, 2, 3], newTokens: [1, 2, 3])
-        #expect(decision == .rebuild)
+        #expect(decision == .replayLast(token: 3))
     }
 
     @Test("new prompt shorter than cached -> rebuild")

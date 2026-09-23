@@ -133,6 +133,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.statusBarMenu?.toggleFrontmostApp()
         }
 
+        // Word alternatives: ⌥↓ lists them, 1–3 inserts one, any other key closes the list.
+        deps.keyMonitor.onAlternativesRequested = { [weak deps] in deps?.requestWordAlternatives() }
+        deps.keyMonitor.onAlternativeChosen = { [weak deps] index in deps?.chooseWordAlternative(at: index) }
+        deps.keyMonitor.onAlternativesClosed = { [weak deps] in deps?.closeWordAlternatives() }
+
         deps.keyMonitor.start()
 
         // One-time checks. If trusted is false → re-grant in System Settings. If a debugger

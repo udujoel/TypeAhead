@@ -9,6 +9,12 @@ enum PromptCacheDecision: Equatable {
     /// everything before them.
     case reuse(deltaTokens: [Int])
 
+    /// The new prompt is exactly the cached one (a re-sample of the same text: a word-alternatives
+    /// request, or a debounce re-fire with nothing typed). The model needs at least one input
+    /// token, so trim the cache by one and feed that last `token` again — same K/V state, fresh
+    /// next-token logits, no full prefill. Callers rebuild instead if the cache can't be trimmed.
+    case replayLast(token: Int)
+
     /// The cache does not match: discard it and reprocess `newTokens` in full.
     case rebuild
 }
@@ -30,8 +36,11 @@ enum PromptCacheDecision: Equatable {
 /// last-workstream, exploratory latency win. Ship the safe version first.
 enum PromptCacheValidity {
     static func decide(cachedTokens: [Int], newTokens: [Int]) -> PromptCacheDecision {
+        if !cachedTokens.isEmpty, newTokens == cachedTokens, let last = newTokens.last {
+            return .replayLast(token: last)
+        }
         // Nothing cached yet, or the new prompt is not strictly longer than the cached
-        // prefix (identical, shorter, or diverging in length only) — nothing to extend.
+        // prefix (shorter, or diverging in length only) — nothing to extend.
         guard !cachedTokens.isEmpty, newTokens.count > cachedTokens.count else {
             return .rebuild
         }

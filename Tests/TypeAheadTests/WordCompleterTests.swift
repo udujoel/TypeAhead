@@ -108,4 +108,11 @@ import Testing
         #expect(partial == "ok")
         #expect(!WordCompleter.shouldOfferInstantCompletion(partial: partial))
     }
+
+    @Test func completionsListsSeveralPrefixExtensions() {
+        let words = WordCompleter.completions(forPartial: "wor", limit: 5)
+        #expect(!words.isEmpty)
+        #expect(words.count <= 5)
+        #expect(words.allSatisfy { $0.lowercased().hasPrefix("wor") && $0.lowercased() != "wor" })
+    }
 }

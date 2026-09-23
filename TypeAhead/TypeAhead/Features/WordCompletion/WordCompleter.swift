@@ -56,4 +56,20 @@ enum WordCompleter {
 
         return String(candidate.dropFirst(partial.count))
     }
+
+    /// Full dictionary words that extend `partial` (strict, case-insensitive prefix extensions), in
+    /// NSSpellChecker's ranking — the mid-word source for word alternatives.
+    static func completions(forPartial partial: String, language: String? = nil, limit: Int) -> [String] {
+        guard let completions = checker.completions(
+            forPartialWordRange: NSRange(location: 0, length: (partial as NSString).length),
+            in: partial,
+            language: language ?? checker.language(),
+            inSpellDocumentWithTag: 0
+        ) else { return [] }
+        let lower = partial.lowercased()
+        return Array(completions.filter {
+            let candidate = $0.lowercased()
+            return candidate.hasPrefix(lower) && candidate != lower
+        }.prefix(limit))
+    }
 }

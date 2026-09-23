@@ -260,20 +260,36 @@ final class InferenceEngine {
                     let newTokens = try context.tokenizer.applyChatTemplate(messages: messages)
                     let decision = PromptCacheValidity.decide(cachedTokens: box.tokens, newTokens: newTokens)
 
-                    let inputTokens: [Int]
-                    let cache: [KVCache]
+                    var inputTokens = newTokens
+                    var chosenCache: [KVCache]? = nil
                     switch decision {
-                    case .reuse(let deltaTokens) where box.kvCache != nil:
-                        inputTokens = deltaTokens
-                        cache = box.kvCache!
-                        logger.info("cache decision: reuse deltaTokens=\(deltaTokens.count, privacy: .public) totalTokens=\(newTokens.count, privacy: .public)")
-                        signposter.emitEvent("cacheReuse", id: signpostID, "deltaTokens=\(deltaTokens.count) totalTokens=\(newTokens.count)")
-                    case .reuse, .rebuild:
+                    case .reuse(let deltaTokens):
+                        if let existing = box.kvCache {
+                            inputTokens = deltaTokens
+                            chosenCache = existing
+                            logger.info("cache decision: reuse deltaTokens=\(deltaTokens.count, privacy: .public) totalTokens=\(newTokens.count, privacy: .public)")
+                            signposter.emitEvent("cacheReuse", id: signpostID, "deltaTokens=\(deltaTokens.count) totalTokens=\(newTokens.count)")
+                        }
+                    case .replayLast(let token):
+                        // Same prompt again (e.g. word alternatives): step the cache back one token
+                        // and re-feed it for fresh next-token logits instead of a full prefill.
+                        if let existing = box.kvCache, canTrimPromptCache(existing),
+                           trimPromptCache(existing, numTokens: 1) == 1 {
+                            inputTokens = [token]
+                            chosenCache = existing
+                            logger.info("cache decision: replay last token totalTokens=\(newTokens.count, privacy: .public)")
+                            signposter.emitEvent("cacheReplay", id: signpostID, "totalTokens=\(newTokens.count)")
+                        }
+                    case .rebuild:
+                        break
+                    }
+                    if chosenCache == nil {
                         inputTokens = newTokens
-                        cache = context.model.newCache(parameters: params)
+                        chosenCache = context.model.newCache(parameters: params)
                         logger.info("cache decision: rebuild totalTokens=\(newTokens.count, privacy: .public)")
                         signposter.emitEvent("cacheRebuild", id: signpostID, "totalTokens=\(newTokens.count)")
                     }
+                    let cache = chosenCache!
 
                     let lmInput = LMInput(tokens: MLXArray(inputTokens))
                     let generated = try MLXLMCommon.generate(

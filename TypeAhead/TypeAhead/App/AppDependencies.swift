@@ -50,6 +50,13 @@ final class AppDependencies {
     /// decide whether to accept or pass Tab through as a literal keystroke (see AppPolicyResolver).
     var currentPolicy = AppPolicyResolver.resolve(globalCompletionsEnabled: true, excludedByList: false, override: nil)
 
+    /// Word alternatives (⌥↓): the numbered list, the request it belongs to, and what the last ML
+    /// generation was asked so alternatives can re-sample the same prompt (a cache replay).
+    let alternativesPanel = AlternativesPanel()
+    private var alternativesRequestID = 0
+    private var alternativesPartialWord = ""
+    private var lastInference: InferenceRequest?
+
     /// B2: set when Escape dismisses a ghost; while active, `runCompletion` shows nothing.
     var dismissCooldown: DismissCooldown?
 
@@ -124,6 +131,7 @@ final class AppDependencies {
         }
         focusEpoch.focusChanged()
         dismissCooldown = nil  // an Escape in the previous field shouldn't mute the new one
+        closeWordAlternatives()
         // WP-5 (P1): drop the screen-context OCR cache on every focus change (app switch or
         // in-field switch) rather than relying solely on the TTL below. This is the actual
         // "new field/app gets fresh context" guarantee; the TTL just bounds how stale a
@@ -519,6 +527,11 @@ final class AppDependencies {
             // output hygiene. The retry already pays a full prefill regardless (see `complete`'s
             // doc comment on `temperature`), so a different instruction adds no extra cache cost.
             let isRetry = attempt > 0
+            if !isRetry {
+                lastInference = InferenceRequest(prompt: prompt, suffix: suffix, personaNote: personaNote,
+                                                 maxWords: settings.completionLength.maxWords,
+                                                 britishSpelling: britishSpelling)
+            }
             inferenceEngine.complete(
                 prompt: prompt,
                 suffix: suffix,
@@ -657,4 +670,133 @@ final class AppDependencies {
 /// reasoning `InferenceEngine`'s own `PromptCacheBox` documents.
 private final class GenerationOutcome: @unchecked Sendable {
     var producedUsableGhost = false
+}
+
+// MARK: - Word alternatives (⌥↓, then 1–3)
+
+/// What the last ML suggestion was generated from — re-sampled for word alternatives.
+struct InferenceRequest {
+    let prompt: String
+    let suffix: String
+    let personaNote: String?
+    let maxWords: Int
+    let britishSpelling: Bool
+}
+
+extension AppDependencies {
+    /// ⌥↓ on a visible ML ghost: list up to three other choices for its first word. A mid-word
+    /// ghost gets dictionary completions of the partial word (instant); a new-word ghost gets extra
+    /// samples of the same prompt from the model, shown as they arrive.
+    func requestWordAlternatives() {
+        guard case .mlCompletion(let ghost, let epoch) = overlayController.mode,
+              focusEpoch.mayAccept(stampedEpoch: epoch),
+              let firstWord = WordAlternatives.firstWord(ofGhost: ghost) else { return }
+        let caret = accessibilityManager.inlineCursorRect() ?? NSRect(origin: NSEvent.mouseLocation, size: .zero)
+        alternativesRequestID += 1
+        let requestID = alternativesRequestID
+
+        let partial = ghost.hasPrefix(" ") ? "" : (currentPartialWord() ?? "")
+        alternativesPartialWord = partial
+        keyMonitor.isAlternativesVisible = true
+
+        if !partial.isEmpty {
+            let language = settings.englishVariant.spellCheckerLanguage(systemLanguage: NSSpellChecker.shared.language())
+            let words = WordAlternatives.rank(
+                WordCompleter.completions(forPartial: partial, language: language, limit: 12),
+                excluding: partial + firstWord, limit: 3)
+            guard !words.isEmpty else { closeWordAlternatives(); return }
+            alternativesPanel.show(words: words, below: caret)
+            return
+        }
+
+        guard let request = lastInference, inferenceEngine.isLoaded else { closeWordAlternatives(); return }
+        alternativesPanel.show(words: [], below: caret)
+        sampleAlternative(round: 0, requestID: requestID, excluding: firstWord, caret: caret,
+                          request: request, collected: AlternativeSamples())
+    }
+
+    /// One extra model sample; chains up to four rounds until three distinct words are found.
+    private func sampleAlternative(round: Int, requestID: Int, excluding firstWord: String, caret: NSRect,
+                                   request: InferenceRequest, collected: AlternativeSamples) {
+        let latest = SampleText()
+        // Same instruction as the original suggestion (same persona, suffix, and word target), so
+        // the prompt tokens are identical and the engine replays its cache instead of re-prefilling.
+        inferenceEngine.complete(
+            prompt: request.prompt,
+            suffix: request.suffix,
+            maxTokens: 6,
+            maxWords: request.maxWords,
+            personaNote: request.personaNote,
+            temperature: 1.0,
+            britishSpelling: request.britishSpelling
+        ) { ghost in
+            latest.value = ghost
+        } onComplete: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, requestID == self.alternativesRequestID, self.alternativesPanel.isVisible else { return }
+                if !latest.value.isEmpty { collected.samples.append(latest.value) }
+                let words = WordAlternatives.rank(collected.samples, excluding: firstWord, limit: 3)
+                if !words.isEmpty { self.alternativesPanel.show(words: words, below: caret) }
+                if words.count < 3 && round < 3 {
+                    self.sampleAlternative(round: round + 1, requestID: requestID, excluding: firstWord,
+                                           caret: caret, request: request, collected: collected)
+                } else if words.isEmpty {
+                    self.closeWordAlternatives()
+                }
+            }
+        }
+    }
+
+    /// 1–3 while the list shows: insert that word in place of the ghost's first word.
+    func chooseWordAlternative(at index: Int) {
+        defer { closeWordAlternatives() }
+        let words = alternativesPanel.words
+        guard index < words.count,
+              case .mlCompletion(let ghost, let epoch) = overlayController.mode,
+              focusEpoch.mayAccept(stampedEpoch: epoch),
+              let insertion = WordAlternatives.insertion(
+                  for: words[index], ghost: ghost, partialWord: alternativesPartialWord,
+                  trailingSpace: settings.addSpaceAfterAcceptedWord) else { return }
+        if let element = accessibilityManager.focusedElement() {
+            accessibilityManager.insertCompletion(insertion, into: element)
+        } else {
+            accessibilityManager.injectText(insertion)
+        }
+        keyMonitor.keystrokeBuffer.appendAccepted(insertion)
+        let chosen = words[index]
+        if currentPolicy.recordHistory {
+            let appName = NSWorkspace.shared.frontmostApplication?.localizedName ?? ""
+            Task { @MainActor in try? self.historyStore.record(accepted: chosen, appName: appName) }
+        }
+        recordSuggestionEvent(kind: .accepted, ghostText: chosen, metadata: "alternative")
+        overlayController.hide(animated: false)
+        completionPipeline.keystrokeReceived()
+    }
+
+    func closeWordAlternatives() {
+        alternativesRequestID += 1  // stops any sampling still in flight from updating the list
+        keyMonitor.isAlternativesVisible = false
+        alternativesPanel.hide()
+    }
+
+    /// The partial word before the caret (AX first, keystroke buffer as fallback).
+    private func currentPartialWord() -> String? {
+        if let context = accessibilityManager.readTextContext() {
+            return ContextBuilder.currentWord(context: context)
+        }
+        let buffer = TextContext(textBeforeCursor: keyMonitor.keystrokeBuffer.text, textAfterCursor: "", appName: "", windowTitle: "")
+        return ContextBuilder.currentWord(context: buffer)
+    }
+}
+
+/// Samples collected across one alternatives request's rounds (main-actor only).
+@MainActor private final class AlternativeSamples {
+    var samples: [String] = []
+}
+
+/// Latest streamed text of one sample; written from the engine's `@Sendable` update callback and
+/// read on the main actor after `onComplete` — the same one-generation-at-a-time reasoning as
+/// `GenerationOutcome`.
+private final class SampleText: @unchecked Sendable {
+    var value = ""
 }

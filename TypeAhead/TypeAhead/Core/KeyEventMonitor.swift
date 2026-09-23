@@ -74,6 +74,9 @@ final class KeyEventMonitor {
     /// Tab is swallowed (not forwarded to the target app) only when this is true.
     var isOverlayVisible = false
 
+    /// True while the word-alternatives list is up: number keys 1–3 choose, anything else closes it.
+    var isAlternativesVisible = false
+
     // MARK: Callbacks wired up by AppDelegate
 
     var onKeystroke: ((NSEvent) -> Void)?
@@ -84,6 +87,12 @@ final class KeyEventMonitor {
     /// ⌥Tab while a ghost shows — a plain Tab was passed through; drop the ghost (B1).
     var onTabPassthrough: (() -> Void)?
     var onDismiss: (() -> Void)?
+    /// ⌥↓ while a ghost shows — list alternatives for its first word.
+    var onAlternativesRequested: (() -> Void)?
+    /// 1–3 while alternatives show — the chosen index (0-based).
+    var onAlternativeChosen: ((Int) -> Void)?
+    /// Any other key while alternatives show — close the list (the key then proceeds normally).
+    var onAlternativesClosed: (() -> Void)?
     /// Global ⌃⌥⌘` — toggle completions for the frontmost app (B3).
     var onToggleCurrentApp: (() -> Void)?
     /// Fired on the global ⌃⌥⌘T shortcut — opens the status menu even when its menu-bar icon
@@ -220,6 +229,26 @@ final class KeyEventMonitor {
         // chord Cotypist uses. Same exact-modifier rule as ⌃⌥⌘T above.
         if keyCode == CGKeyCode(kVK_ANSI_Grave), menuMods == [.maskControl, .maskAlternate, .maskCommand] {
             Task { @MainActor [weak self] in self?.onToggleCurrentApp?() }
+            return nil
+        }
+
+        let mods = event.flags.intersection([.maskShift, .maskCommand, .maskControl, .maskAlternate])
+
+        // Word alternatives: while the list is up, 1–3 choose; any other key closes it first.
+        if isAlternativesVisible {
+            let digitKeys: [CGKeyCode] = [CGKeyCode(kVK_ANSI_1), CGKeyCode(kVK_ANSI_2), CGKeyCode(kVK_ANSI_3)]
+            if mods.isEmpty, let index = digitKeys.firstIndex(of: keyCode) {
+                Task { @MainActor [weak self] in self?.onAlternativeChosen?(index) }
+                return nil
+            }
+            isAlternativesVisible = false
+            onAlternativesClosed?()
+        }
+
+        // ⌥↓ with a ghost showing — open word alternatives (swallowed so the app doesn't move
+        // the cursor to the end of the paragraph).
+        if keyCode == CGKeyCode(kVK_DownArrow), mods == .maskAlternate, isOverlayVisible {
+            Task { @MainActor [weak self] in self?.onAlternativesRequested?() }
             return nil
         }
 
